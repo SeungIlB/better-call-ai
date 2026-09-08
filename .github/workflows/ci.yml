@@ -19,5 +19,7 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: gradle
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
       - name: Validate and test
         run: ./gradlew clean test --no-daemon
