@@ -1,6 +1,6 @@
 spring:
   application:
-    name: casecraft-api
+    name: better-call-ai
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
     username: ${DATABASE_APP_USER:legal_ai_app}

@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: CaseCraft AI API
+  title: Better Call AI API
   version: 0.1.0
   description: 1인 1사건 소유권과 사용자 확인을 중심으로 한 MVP 계약
 servers:

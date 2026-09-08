@@ -6,7 +6,7 @@ plugins {
 
 group = 'kr.co.legalai'
 version = '0.0.1-SNAPSHOT'
-description = 'CaseCraft AI backend'
+description = 'Better Call AI backend'
 
 java {
     toolchain {

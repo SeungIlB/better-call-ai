@@ -1,4 +1,4 @@
-# CaseCraft AI Backend
+# Better Call AI Backend
 
 개인 사용자가 자신의 생활 분쟁을 정리하고, OCR 수정본·법률 근거·AI 분석·대응 문서를 한 사건 단위로 관리하는 API 서버의 개발 기반입니다.
 
