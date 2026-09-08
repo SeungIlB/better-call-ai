@@ -1,0 +1,39 @@
+package kr.co.legalai.common.persistence;
+
+import kr.co.legalai.common.security.AuthenticatedUser;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.Objects;
+import java.util.UUID;
+import java.util.function.Function;
+
+@Component
+public class UserScopedTransaction {
+    private final TransactionTemplate transactionTemplate;
+    private final JdbcTemplate jdbcTemplate;
+    private final AuthenticatedUser authenticatedUser;
+
+    public UserScopedTransaction(
+            TransactionTemplate transactionTemplate,
+            JdbcTemplate jdbcTemplate,
+            AuthenticatedUser authenticatedUser
+    ) {
+        this.transactionTemplate = transactionTemplate;
+        this.jdbcTemplate = jdbcTemplate;
+        this.authenticatedUser = authenticatedUser;
+    }
+
+    public <T> T execute(Function<UUID, T> block) {
+        return Objects.requireNonNull(transactionTemplate.execute(status -> {
+            UUID userId = authenticatedUser.id();
+            jdbcTemplate.queryForObject(
+                    "select set_config('app.user_id', ?, true)",
+                    String.class,
+                    userId.toString()
+            );
+            return block.apply(userId);
+        }), "User-scoped transaction returned null");
+    }
+}

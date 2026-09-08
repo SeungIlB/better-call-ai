@@ -18,8 +18,7 @@ OCR 공급자, LLM/RAG, 객체 저장소, outbox worker와 보존 배치는 인�
 
 ## 기술 기준
 
-- Java 21
-- Kotlin
+- Java 21 (record·text block 사용)
 - Spring Boot 4.1
 - Gradle Wrapper
 - PostgreSQL 16 / pgvector
@@ -77,8 +76,8 @@ docker compose config
 api/openapi.yaml                    API 계약
 docker/postgres/init                로컬 DB role 초기화
 src/main/resources/db/migration     Flyway V001~V010
-src/main/kotlin/.../common          보안·RLS 트랜잭션·공통 응답
-src/main/kotlin/.../casework        첫 vertical slice
+src/main/java/.../common            보안·RLS 트랜잭션·공통 응답
+src/main/java/.../casework          첫 vertical slice
 src/test                            PostgreSQL/RLS 통합 테스트
 ```
 
