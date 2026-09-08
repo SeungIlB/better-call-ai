@@ -9,6 +9,9 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
 
+/**
+ * 같은 DB 트랜잭션에 인증 사용자 ID를 local GUC로 설정해 PostgreSQL RLS를 강제한다.
+ */
 @Component
 public class UserScopedTransaction {
     private final TransactionTemplate transactionTemplate;

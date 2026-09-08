@@ -4,7 +4,7 @@
 
 ## 현재 구현 범위
 
-- PostgreSQL 16 + pgvector 전체 Flyway migration V001~V010
+- PostgreSQL 16 + pgvector 전체 Flyway migration V001~V011
 - migration / auth / application DB role 분리
 - JWT Resource Server 보안 기본값
 - 요청 트랜잭션마다 `app.user_id`를 주입하는 PostgreSQL RLS 경계
@@ -54,7 +54,7 @@ docker compose config
 
 통합 테스트는 실제 `pgvector/pgvector:pg16` 컨테이너를 띄우고 다음을 확인합니다.
 
-1. V001~V010 migration 전체 성공
+1. V001~V011 migration 전체 성공
 2. 사용자 A의 사건 생성
 3. 진술 변경 시 version 증가
 4. 같은 트랜잭션의 outbox 2건

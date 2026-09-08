@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.net.URI;
 import java.util.UUID;
 
+/**
+ * 사건 리소스의 생성, 단건 조회, 부분 수정을 제공하는 REST 컨트롤러.
+ */
 @RestController
 @RequestMapping("/api/v1/cases")
 public class CaseController {

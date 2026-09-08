@@ -15,6 +15,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
+/**
+ * 사용자 범위 트랜잭션에서 사건 변경, 분석 무효화, outbox 기록을 조정한다.
+ */
 @Service
 public class CaseServiceImpl implements CaseService {
     private final UserScopedTransaction transaction;

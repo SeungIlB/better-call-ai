@@ -5,6 +5,9 @@ import org.springframework.stereotype.Repository;
 
 import java.util.UUID;
 
+/**
+ * 사건 입력 변경에 따른 기존 분석 실행의 stale 전환을 담당한다.
+ */
 @Repository
 public class AnalysisRepository {
     private final JdbcTemplate jdbcTemplate;

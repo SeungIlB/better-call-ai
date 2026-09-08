@@ -114,6 +114,37 @@ class CaseFlowIntegrationTest {
         assertThrows(CaseNotFoundException.class, () -> service.getCase(created.id()));
     }
 
+    @Test
+    void schemaDescriptionsCoverAllBusinessTablesAndCriticalColumns() throws SQLException {
+        try (Connection connection = adminConnection();
+             var statement = connection.createStatement();
+             var result = statement.executeQuery("""
+                     SELECT
+                         count(DISTINCT c.oid) AS table_count,
+                         count(DISTINCT c.oid) FILTER (
+                             WHERE obj_description(c.oid, 'pg_class') IS NOT NULL
+                         ) AS described_table_count,
+                         count(*) FILTER (
+                             WHERE col_description(c.oid, a.attnum) IS NOT NULL
+                         ) AS described_column_count
+                     FROM pg_class c
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                     JOIN pg_attribute a ON a.attrelid = c.oid
+                         AND a.attnum > 0
+                         AND NOT a.attisdropped
+                     WHERE c.relkind = 'r'
+                       AND n.nspname IN (
+                           'identity', 'casework', 'knowledge', 'aiops',
+                           'workflow', 'audit', 'ops'
+                       )
+                     """)) {
+            result.next();
+            assertEquals(40, result.getInt("table_count"));
+            assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
+            assertEquals(42, result.getInt("described_column_count"));
+        }
+    }
+
     private void authenticate(UUID userId) {
         SecurityContextHolder.getContext().setAuthentication(
                 new TestingAuthenticationToken(userId.toString(), null)

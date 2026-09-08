@@ -5,6 +5,9 @@ import org.springframework.stereotype.Repository;
 
 import java.util.UUID;
 
+/**
+ * 도메인 변경과 비동기 외부 작업을 연결하는 outbox event를 저장한다.
+ */
 @Repository
 public class OutboxRepository {
     private final JdbcTemplate jdbcTemplate;

@@ -9,6 +9,9 @@ import org.springframework.stereotype.Repository;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * casework.cases 테이블의 사용자 범위 CRUD를 담당한다.
+ */
 @Repository
 public class CaseRepository {
     private static final RowMapper<CaseEntity> ROW_MAPPER = (result, rowNumber) -> new CaseEntity(
