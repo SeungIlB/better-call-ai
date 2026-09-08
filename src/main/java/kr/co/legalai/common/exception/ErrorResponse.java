@@ -1,14 +1,14 @@
-package kr.co.legalai.common.api;
+package kr.co.legalai.common.exception;
 
 import java.time.Instant;
 
-public record ApiError(
+public record ErrorResponse(
         String code,
         String message,
         String traceId,
         Instant occurredAt
 ) {
-    public ApiError(String code, String message, String traceId) {
+    public ErrorResponse(String code, String message, String traceId) {
         this(code, message, traceId, Instant.now());
     }
 }

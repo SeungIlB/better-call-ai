@@ -1,8 +1,9 @@
 package kr.co.legalai;
 
-import kr.co.legalai.casework.api.CreateCaseRequest;
-import kr.co.legalai.casework.api.UpdateStatementRequest;
-import kr.co.legalai.casework.application.CaseService;
+import kr.co.legalai.casework.dto.request.CreateCaseRequest;
+import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
+import kr.co.legalai.casework.service.CaseService;
+import kr.co.legalai.common.exception.CaseNotFoundException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,7 +13,6 @@ import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.web.server.ResponseStatusException;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -91,16 +91,16 @@ class CaseFlowIntegrationTest {
     @Test
     void caseWriteIsVersionedAndIsolatedByRls() throws SQLException {
         authenticate(USER_A);
-        var created = service.create(new CreateCaseRequest(
+        var created = service.createCase(new CreateCaseRequest(
                 "중고거래 환불 분쟁",
                 "구매자",
                 null,
                 "물건이 설명과 달랐습니다."
         ));
 
-        var updated = service.updateStatement(
+        var updated = service.updateCase(
                 created.id(),
-                new UpdateStatementRequest(
+                new UpdateCaseRequest(
                         "판매자가 하자를 고지하지 않았습니다.",
                         1
                 )
@@ -111,7 +111,7 @@ class CaseFlowIntegrationTest {
         assertEquals(2, outboxCount(created.id()));
 
         authenticate(USER_B);
-        assertThrows(ResponseStatusException.class, () -> service.get(created.id()));
+        assertThrows(CaseNotFoundException.class, () -> service.getCase(created.id()));
     }
 
     private void authenticate(UUID userId) {

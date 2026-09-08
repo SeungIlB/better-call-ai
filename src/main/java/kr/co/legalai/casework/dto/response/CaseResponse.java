@@ -1,4 +1,4 @@
-package kr.co.legalai.casework.api;
+package kr.co.legalai.casework.dto.response;
 
 import java.time.Instant;
 import java.util.UUID;

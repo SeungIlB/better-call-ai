@@ -1,4 +1,4 @@
-package kr.co.legalai.casework.api;
+package kr.co.legalai.casework.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;

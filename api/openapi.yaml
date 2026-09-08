@@ -8,7 +8,7 @@ servers:
 security:
   - bearerAuth: []
 paths:
-  /v1/cases:
+  /api/v1/cases:
     post:
       operationId: createCase
       summary: 사건 생성
@@ -27,7 +27,7 @@ paths:
                 $ref: '#/components/schemas/Case'
         '400':
           $ref: '#/components/responses/BadRequest'
-  /v1/cases/{caseId}:
+  /api/v1/cases/{caseId}:
     parameters:
       - $ref: '#/components/parameters/CaseId'
     get:
@@ -42,18 +42,15 @@ paths:
                 $ref: '#/components/schemas/Case'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/cases/{caseId}/statement:
-    parameters:
-      - $ref: '#/components/parameters/CaseId'
-    put:
-      operationId: updateCaseStatement
-      summary: 진술 수정 및 기존 분석 stale 처리
+    patch:
+      operationId: updateCase
+      summary: 사건 진술 수정 및 기존 분석 stale 처리
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateStatementRequest'
+              $ref: '#/components/schemas/UpdateCaseRequest'
       responses:
         '200':
           description: 변경됨
@@ -63,7 +60,7 @@ paths:
                 $ref: '#/components/schemas/Case'
         '409':
           description: version 충돌
-  /v1/cases/{caseId}/files:
+  /api/v1/cases/{caseId}/files:
     parameters:
       - $ref: '#/components/parameters/CaseId'
     post:
@@ -72,7 +69,7 @@ paths:
       responses:
         '201':
           description: 업로드 세션
-  /v1/cases/{caseId}/files/{fileId}/ocr-revisions:
+  /api/v1/cases/{caseId}/files/{fileId}/ocr-revisions:
     parameters:
       - $ref: '#/components/parameters/CaseId'
       - name: fileId
@@ -85,7 +82,7 @@ paths:
       responses:
         '201':
           description: 수정본 생성
-  /v1/cases/{caseId}/analyses:
+  /api/v1/cases/{caseId}/analyses:
     parameters:
       - $ref: '#/components/parameters/CaseId'
     post:
@@ -94,7 +91,7 @@ paths:
       responses:
         '202':
           description: 분석 요청 접수
-  /v1/cases/{caseId}/documents:
+  /api/v1/cases/{caseId}/documents:
     parameters:
       - $ref: '#/components/parameters/CaseId'
     post:
@@ -135,11 +132,11 @@ components:
         userPartyRole: { type: [string, 'null'], maxLength: 40 }
         userGoal: { type: [string, 'null'], maxLength: 2000 }
         originalStatement: { type: [string, 'null'], maxLength: 50000 }
-    UpdateStatementRequest:
+    UpdateCaseRequest:
       type: object
-      required: [statement, expectedVersion]
+      required: [originalStatement, expectedVersion]
       properties:
-        statement: { type: string, minLength: 1, maxLength: 50000 }
+        originalStatement: { type: string, minLength: 1, maxLength: 50000 }
         expectedVersion: { type: integer, minimum: 1 }
     Case:
       type: object

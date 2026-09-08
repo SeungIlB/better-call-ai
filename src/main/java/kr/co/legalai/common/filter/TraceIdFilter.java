@@ -1,4 +1,4 @@
-package kr.co.legalai.common.web;
+package kr.co.legalai.common.filter;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -19,10 +19,8 @@ public class TraceIdFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain filterChain
     ) throws ServletException, IOException {
-        String requestedTraceId = request.getHeader("X-Trace-Id");
-        String traceId = requestedTraceId != null && requestedTraceId.length() <= 100
-                ? requestedTraceId
-                : UUID.randomUUID().toString();
+        String header = request.getHeader("X-Trace-Id");
+        String traceId = header != null && header.length() <= 100 ? header : UUID.randomUUID().toString();
         MDC.put("traceId", traceId);
         response.setHeader("X-Trace-Id", traceId);
         try {

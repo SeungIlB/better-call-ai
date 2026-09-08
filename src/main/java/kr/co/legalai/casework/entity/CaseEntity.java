@@ -1,9 +1,9 @@
-package kr.co.legalai.casework.domain;
+package kr.co.legalai.casework.entity;
 
 import java.time.Instant;
 import java.util.UUID;
 
-public record CaseRecord(
+public record CaseEntity(
         UUID id,
         String title,
         String status,

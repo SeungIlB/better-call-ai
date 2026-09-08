@@ -73,13 +73,31 @@ docker compose config
 ## 디렉터리
 
 ```text
-api/openapi.yaml                    API 계약
-docker/postgres/init                로컬 DB role 초기화
-src/main/resources/db/migration     Flyway V001~V010
-src/main/java/.../common            보안·RLS 트랜잭션·공통 응답
-src/main/java/.../casework          첫 vertical slice
-src/test                            PostgreSQL/RLS 통합 테스트
+kr.co.legalai
+├─ config/                          Spring Security·트랜잭션 설정
+├─ common/
+│  ├─ exception/                   공통 오류와 예외 처리
+│  ├─ filter/                      Trace ID 필터
+│  ├─ security/                    인증 사용자 조회
+│  └─ transaction/                 PostgreSQL RLS 사용자 트랜잭션
+└─ casework/
+   ├─ controller/                  REST Controller
+   ├─ service/                     Service interface
+   ├─ serviceimpl/                 Service implementation
+   ├─ repository/                  JDBC Repository
+   ├─ entity/                      DB 조회 모델
+   └─ dto/
+      ├─ request/                   API 요청 DTO
+      └─ response/                  API 응답 DTO
 ```
+
+요청 흐름은 `Controller → Service → ServiceImpl → Repository → PostgreSQL`로 고정합니다.
+
+## 현재 REST API
+
+- `POST /api/v1/cases` — 사건 생성
+- `GET /api/v1/cases/{caseId}` — 사건 단건 조회
+- `PATCH /api/v1/cases/{caseId}` — 사건 진술 수정
 
 ## 다음 구현 순서
 

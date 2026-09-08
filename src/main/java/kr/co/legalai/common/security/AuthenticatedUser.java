@@ -9,7 +9,7 @@ import java.util.UUID;
 
 @Component
 public class AuthenticatedUser {
-    public UUID id() {
+    public UUID getUserId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || authentication.getName() == null) {
             throw new AccessDeniedException("Authentication is required");
