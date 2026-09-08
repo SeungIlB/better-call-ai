@@ -1,0 +1,164 @@
+openapi: 3.1.0
+info:
+  title: CaseCraft AI API
+  version: 0.1.0
+  description: 1인 1사건 소유권과 사용자 확인을 중심으로 한 MVP 계약
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+paths:
+  /v1/cases:
+    post:
+      operationId: createCase
+      summary: 사건 생성
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCaseRequest'
+      responses:
+        '201':
+          description: 생성됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Case'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/cases/{caseId}:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    get:
+      operationId: getCase
+      summary: 내 사건 조회
+      responses:
+        '200':
+          description: 사건
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Case'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/cases/{caseId}/statement:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    put:
+      operationId: updateCaseStatement
+      summary: 진술 수정 및 기존 분석 stale 처리
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStatementRequest'
+      responses:
+        '200':
+          description: 변경됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Case'
+        '409':
+          description: version 충돌
+  /v1/cases/{caseId}/files:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    post:
+      operationId: createFileUpload
+      summary: 원본 파일 업로드 세션 생성
+      responses:
+        '201':
+          description: 업로드 세션
+  /v1/cases/{caseId}/files/{fileId}/ocr-revisions:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+      - name: fileId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: saveOcrRevision
+      summary: OCR 수정본 저장
+      responses:
+        '201':
+          description: 수정본 생성
+  /v1/cases/{caseId}/analyses:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    post:
+      operationId: requestAnalysis
+      summary: 현재 확인본으로 분석 요청
+      responses:
+        '202':
+          description: 분석 요청 접수
+  /v1/cases/{caseId}/documents:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    post:
+      operationId: generateDocument
+      summary: 현재 유효한 분석으로 문서 생성
+      responses:
+        '202':
+          description: 문서 생성 접수
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    CaseId:
+      name: caseId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    BadRequest:
+      description: 잘못된 요청
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    NotFound:
+      description: 없거나 접근할 수 없는 자원
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+  schemas:
+    CreateCaseRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 200 }
+        userPartyRole: { type: [string, 'null'], maxLength: 40 }
+        userGoal: { type: [string, 'null'], maxLength: 2000 }
+        originalStatement: { type: [string, 'null'], maxLength: 50000 }
+    UpdateStatementRequest:
+      type: object
+      required: [statement, expectedVersion]
+      properties:
+        statement: { type: string, minLength: 1, maxLength: 50000 }
+        expectedVersion: { type: integer, minimum: 1 }
+    Case:
+      type: object
+      required: [id, title, status, version, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        status: { type: string, enum: [DRAFT, COLLECTING, REVIEW_READY, ANALYZING, READY, CLOSED] }
+        userPartyRole: { type: [string, 'null'] }
+        userGoal: { type: [string, 'null'] }
+        originalStatement: { type: [string, 'null'] }
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ApiError:
+      type: object
+      required: [code, message, occurredAt]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: [string, 'null'] }
+        occurredAt: { type: string, format: date-time }
