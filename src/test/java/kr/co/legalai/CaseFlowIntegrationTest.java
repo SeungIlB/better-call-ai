@@ -230,7 +230,7 @@ class CaseFlowIntegrationTest {
             result.next();
             assertEquals(47, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(81, result.getInt("described_column_count"));
+            assertEquals(83, result.getInt("described_column_count"));
         }
     }
 
@@ -1890,6 +1890,53 @@ class CaseFlowIntegrationTest {
     private org.springframework.test.web.servlet.ResultActions chatHistory(AuthTokenResponse user, UUID caseId) throws Exception {
         return mockMvc.perform(get("/api/v1/cases/{caseId}/chat/turns", caseId)
                 .header("Authorization", "Bearer " + user.accessToken()));
+    }
+
+    @Test
+    void lawClassificationAndChunkTopicsHaveIndependentDatabaseConstraints() throws Exception {
+        try (var connection = adminConnection(); var statement = connection.createStatement()) {
+            UUID source = UUID.randomUUID();
+            UUID document = UUID.randomUUID();
+            UUID chunk = UUID.randomUUID();
+            statement.executeUpdate("""
+                    INSERT INTO knowledge.legal_sources(id, source_code, source_type, publisher, authority_level)
+                    VALUES ('%s', '%s', 'law', 'test', 1)
+                    """.formatted(source, source));
+            statement.executeUpdate("""
+                    INSERT INTO knowledge.legal_documents(id, source_id, external_id, document_type, title,
+                        version_label, source_url, raw_text, content_hash)
+                    VALUES ('%s', '%s', 'test', 'law', '민법', 'v1', 'https://www.law.go.kr', 'test', '%s')
+                    """.formatted(document, source, "a".repeat(64)));
+            try (var rows = statement.executeQuery("SELECT law_kind FROM knowledge.legal_documents WHERE id='" + document + "'")) {
+                rows.next();
+                org.junit.jupiter.api.Assertions.assertNull(rows.getString(1));
+            }
+            statement.executeUpdate("UPDATE knowledge.legal_documents SET law_kind='ACT' WHERE id='" + document + "'");
+            assertEquals("23514", assertThrows(SQLException.class, () -> statement.executeUpdate(
+                    "UPDATE knowledge.legal_documents SET law_kind='민법' WHERE id='" + document + "'"
+            )).getSQLState());
+            assertEquals("23514", assertThrows(SQLException.class, () -> statement.executeUpdate(
+                    "UPDATE knowledge.legal_documents SET document_type='precedent' WHERE id='" + document + "'"
+            )).getSQLState());
+            statement.executeUpdate("""
+                    INSERT INTO knowledge.legal_chunks(id, document_id, chunk_type, content, ordinal)
+                    VALUES ('%s', '%s', 'article', '수선의무', 0)
+                    """.formatted(chunk, document));
+            try (var update = connection.prepareStatement("UPDATE knowledge.legal_chunks SET metadata=?::jsonb WHERE id=?")) {
+                update.setObject(2, chunk);
+                for (String valid : List.of("{}", "{\"topic_tags\":[]}",
+                        "{\"topic_tags\":[\"housing_lease\",\"repair_duty\"]}")) {
+                    update.setString(1, valid);
+                    assertEquals(1, update.executeUpdate());
+                }
+                for (String invalid : List.of("{\"topic_tags\":null}", "{\"topic_tags\":\"housing_lease\"}",
+                        "{\"topic_tags\":[1]}", "{\"topic_tags\":[null]}", "{\"topic_tags\":[{}]}",
+                        "{\"topic_tags\":[\"\"]}", "{\"topic_tags\":[\"   \"]}")) {
+                    update.setString(1, invalid);
+                    assertEquals("23514", assertThrows(SQLException.class, update::executeUpdate).getSQLState());
+                }
+            }
+        }
     }
 
     private static KeyPair generateRsaKeyPair() {

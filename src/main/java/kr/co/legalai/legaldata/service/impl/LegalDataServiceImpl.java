@@ -8,6 +8,7 @@ import kr.co.legalai.legaldata.dto.response.LegalDocumentResponse;
 import kr.co.legalai.legaldata.dto.response.LegalSearchItemResponse;
 import kr.co.legalai.legaldata.dto.response.LegalSearchResponse;
 import kr.co.legalai.legaldata.entity.LegalDocumentType;
+import kr.co.legalai.legaldata.entity.LawKind;
 import kr.co.legalai.legaldata.repository.LawOpenDataRepository;
 import kr.co.legalai.legaldata.service.LegalDataService;
 import org.springframework.stereotype.Service;
@@ -63,7 +64,8 @@ public class LegalDataServiceImpl implements LegalDataService {
                 parseDate(firstText(response, dateFields(type))),
                 parseDate(firstText(response, "시행일자")),
                 absoluteUrl(firstText(response, linkFields(type))),
-                flattenText(response)
+                flattenText(response),
+                lawKind(type, response)
         );
     }
 
@@ -75,7 +77,8 @@ public class LegalDataServiceImpl implements LegalDataService {
                 firstText(node, publisherFields(type)),
                 parseDate(firstText(node, dateFields(type))),
                 parseDate(firstText(node, "시행일자")),
-                absoluteUrl(firstText(node, linkFields(type)))
+                absoluteUrl(firstText(node, linkFields(type))),
+                lawKind(type, node)
         );
     }
 
@@ -83,6 +86,16 @@ public class LegalDataServiceImpl implements LegalDataService {
         return type == LegalDocumentType.LAW
                 ? new String[]{"법령ID", "법령일련번호"}
                 : new String[]{"판례일련번호", "판례정보일련번호"};
+    }
+
+    private LawKind lawKind(LegalDocumentType type, JsonNode node) {
+        if (type != LegalDocumentType.LAW) return null;
+        // 본문은 기본정보만 확인하여 참조 법령/조문에 있는 다른 법종을 오인하지 않는다.
+        JsonNode law = node.has("법령") ? node.path("법령") : node;
+        JsonNode info = law.has("기본정보") ? law.path("기본정보") : law;
+        JsonNode value = info.has("법령구분명") ? info.path("법령구분명") : info.path("법종구분");
+        if (value.isObject()) value = value.path("content");
+        return value.isString() ? LawKind.fromOfficialName(value.asString()) : null;
     }
 
     private String[] titleFields(LegalDocumentType type) {

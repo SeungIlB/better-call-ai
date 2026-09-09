@@ -649,6 +649,10 @@ components:
       properties:
         externalId: { type: string }
         title: { type: string }
+        lawKind:
+          type: [string, 'null']
+          enum: [CONSTITUTION, ACT, PRESIDENTIAL_DECREE, PRIME_MINISTER_ORDINANCE, MINISTERIAL_ORDINANCE, RULE, null]
+          description: 공식 법령 형식. 법령명·주제와 별개이며 미확인·미지원 분류 및 판례는 null
         caseNumber: { type: [string, 'null'] }
         publisher: { type: [string, 'null'] }
         publishedOrDecisionDate: { type: [string, 'null'], format: date }

@@ -4,7 +4,7 @@
 
 ## 현재 구현 범위
 
-- PostgreSQL 16 + pgvector 전체 Flyway migration V001~V017
+- PostgreSQL 16 + pgvector 전체 Flyway migration V001~V018
 - migration / auth / application DB role 분리
 - JWT 회원가입·로그인·재발급·로그아웃·내 정보 API
 - JWT RS256 서명·만료·발급자·audience 검증과 공통 401/403 응답
@@ -57,6 +57,18 @@ OCR 공급자, OpenAI Vector Store/RAG, 객체 저장소, outbox worker와 DB �
 - `store:false`로 Responses 객체 보관을 끄지만 모든 공급자 로그/보관 정책의 제로 보존을 뜻하지 않습니다. 본문·토큰·외부 오류 원문을 애플리케이션 로그에 남기지 않습니다.
 
 OpenAI 연동 계약은 공식 [텍스트 생성 문서](https://developers.openai.com/api/docs/guides/text)와 [대화 상태 관리 문서](https://developers.openai.com/api/docs/guides/conversation-state)를 기준으로 작성했습니다. 테스트는 로컬 HTTP 서버와 모의 모델 응답을 사용하며 실제 유료 API를 호출하지 않습니다.
+
+## 법률 데이터 분류
+
+법률 데이터 분류는 다음 기준을 사용합니다.
+
+- `legal_documents.document_type`: `law`, `precedent` 등 문서 종류. 기존 값 유지.
+- `legal_documents.law_kind`: 공식 법령 형식. `CONSTITUTION`(헌법), `ACT`(법률), `PRESIDENTIAL_DECREE`(대통령령), `PRIME_MINISTER_ORDINANCE`(총리령), `MINISTERIAL_ORDINANCE`(부령), `RULE`(규칙). 비법령 문서는 설정 불가. 미확인·미지원 분류는 `NULL`이며 기존 문서를 일괄 추정·보정하지 않습니다.
+- `title`: 민법·주택임대차보호법 등 개별 법령명. 공식 ID·버전·시행일과 함께 관리합니다.
+- `legal_chunks.metadata.topic_tags`: 조문별 검색 주제. 예: `["housing_lease", "repair_duty"]`. 문자열 배열만 허용하고 null·숫자·공백 태그는 차단합니다. 미분류는 키 생략 또는 빈 배열이며, 민법 전체에 임대차 태그를 자동 전파하지 않습니다. 태그 검색용 GIN 인덱스를 제공합니다.
+- 법령 검색·본문 API에 nullable `lawKind`를 추가했습니다. 목록의 `법령구분명`, 본문의 `기본정보.법종구분`으로 매핑하며 법령 제목이나 참조 조문의 분류를 대신 사용하지 않습니다.
+
+이번 단계는 분류 스키마와 조회 응답 매핑입니다. 원문 버전별 적재·조문 분할·태그 부여·임베딩 파이프라인은 아직 구현 전이며, 자동으로 법률 데이터를 채우지는 않습니다.
 
 ## 기술 기준
 
