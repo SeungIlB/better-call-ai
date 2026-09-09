@@ -4,15 +4,19 @@ import jakarta.validation.Valid;
 import kr.co.legalai.casework.dto.request.CreateCaseRequest;
 import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
 import kr.co.legalai.casework.dto.response.CaseResponse;
+import kr.co.legalai.casework.dto.response.CaseSummaryResponse;
 import kr.co.legalai.casework.service.CaseService;
 import kr.co.legalai.common.response.ApiResponse;
+import kr.co.legalai.common.response.PageResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
@@ -41,6 +45,20 @@ public class CaseController {
     @GetMapping("/{caseId}")
     public ApiResponse<CaseResponse> getCase(@PathVariable UUID caseId) {
         return ApiResponse.success(caseService.getCase(caseId));
+    }
+
+    @GetMapping
+    public ApiResponse<PageResponse<CaseSummaryResponse>> listCases(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        return ApiResponse.success(caseService.listCases(page, pageSize));
+    }
+
+    @DeleteMapping("/{caseId}")
+    public ResponseEntity<Void> deleteCase(@PathVariable UUID caseId) {
+        caseService.deleteCase(caseId);
+        return ResponseEntity.noContent().build();
     }
 
     @PatchMapping("/{caseId}")

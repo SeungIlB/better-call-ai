@@ -4,7 +4,7 @@
 
 ## 현재 구현 범위
 
-- PostgreSQL 16 + pgvector 전체 Flyway migration V001~V013
+- PostgreSQL 16 + pgvector 전체 Flyway migration V001~V014
 - migration / auth / application DB role 분리
 - JWT 회원가입·로그인·재발급·로그아웃·내 정보 API
 - JWT RS256 서명·만료·발급자·audience 검증과 공통 401/403 응답
@@ -13,6 +13,7 @@
 - 이메일 AES-256-GCM 암호화와 HMAC 조회값 분리
 - 요청 트랜잭션마다 `app.user_id`를 주입하는 PostgreSQL RLS 경계
 - 사건 생성·조회·진술 수정 vertical slice
+- 내 사건 요약 목록 페이지 조회 및 7일 유예 논리 삭제
 - 법제처 국가법령정보 공동활용 API의 법령·판례 검색 및 본문 정규화
 - 진술 수정 시 optimistic lock, 기존 분석 stale 처리, outbox 발행
 - 공통 오류 응답과 trace ID
@@ -76,7 +77,7 @@ docker compose config
 
 통합 테스트는 실제 `pgvector/pgvector:pg16` 컨테이너를 띄우고 다음을 확인합니다.
 
-1. V001~V013 migration 전체 성공
+1. V001~V014 migration 전체 성공
 2. 사용자 A의 사건 생성
 3. 진술 변경 시 version 증가
 4. 같은 트랜잭션의 outbox 2건
@@ -89,6 +90,8 @@ docker compose config
 11. 실제 발급 JWT와 MockMvc 보안 필터 체인으로 사건 생성·조회·수정 소유권 검증
 12. 본문·쿼리·헤더의 사용자 ID 위조 차단, 타인/없는 사건의 동일 404, 거부 후 DB 전체 행·outbox 불변
 13. 소유자의 정상 수정과 오래된 버전 409, 익명 요청 401, 단일 연결 풀 재사용 시 사용자 범위 초기화
+14. 본인 활성 사건 목록의 페이지 경계·빈 목록·정렬·잘못된 페이지 입력 검증
+15. 사건 삭제 후 연결 파일 접근 차단, 반복 삭제 404, outbox 실패 시 삭제 전체 롤백
 
 ## 중요한 보안 경계
 
@@ -97,6 +100,7 @@ docker compose config
 - `legal_ai_app`: API role; `NOBYPASSRLS`
 - API repository 호출은 반드시 `UserScopedTransaction` 안에서 수행
 - 사건이 없거나 타인 소유이면 모두 404로 처리
+- 논리 삭제는 소유권을 재검증하는 한정된 SECURITY DEFINER 함수로 수행하며 SELECT RLS 범위를 넓히지 않음
 - 원본 파일 장기 보관 금지; 확정 OCR 수정본만 영속 보관
 - 비밀값·원문·복호화 개인정보를 로그에 기록하지 않음
 
@@ -170,20 +174,35 @@ kr.co.legalai
 - `GET /api/v1/auth/me` — 인증 사용자 정보 조회
 - `GET /.well-known/jwks.json` — JWT 검증 공개키
 - `POST /api/v1/cases` — 사건 생성
+- `GET /api/v1/cases?page=1&pageSize=20` — 내 활성 사건 요약 목록
 - `GET /api/v1/cases/{caseId}` — 사건 단건 조회
 - `PATCH /api/v1/cases/{caseId}` — 사건 진술 수정
+- `DELETE /api/v1/cases/{caseId}` — 사건 논리 삭제 및 영구 삭제 예정 시각 기록
 - `GET /api/v1/legal-data/law?query=민법` — 법령 검색
 - `GET /api/v1/legal-data/precedent?query=임대차%20수선의무` — 판례 검색
 - `GET /api/v1/legal-data/{type}/{externalId}` — 법령·판례 본문 정규화 조회
 
 ## 다음 구현 순서
 
-1. 사건 목록·삭제 기능
-2. 파일 API 구현 시 소유권 HTTP 통합 테스트 (현재 파일은 DB RLS만 검증)
-3. 업로드 세션·MIME/magic byte 검증·OCR outbox worker
-4. OCR 수정본 확정과 원본 purge
-5. 확인 질문·사실 충돌 해결
-6. 법률 문서 적재·구조 기반 청킹·OpenAI Vector Store 연동
-7. RAG 검색과 분석 실행
-8. 대응 계획·문서 생성
-9. 보존기간·탈퇴 purge job
+1. 업로드 세션·MIME/magic byte 검증과 파일 소유권 HTTP 테스트
+2. OCR outbox worker·수정본 확정·원본 purge
+3. 확인 질문·사실 충돌 해결
+4. 법률 문서 적재·구조 기반 청킹·OpenAI Vector Store 연동
+5. RAG 검색과 분석 실행
+6. 대응 계획·문서 생성
+7. 보존기간·탈퇴 purge job
+
+## 사건 목록과 삭제 계약
+
+목록은 최근 수정순(`updated_at DESC, id DESC`)으로 정렬하고, 페이지당 한 건을 더 조회해
+`hasNext`를 계산한다. `page`는 1~10,000, `pageSize`는 1~100(기본 20)이다. 허용 범위를 벗어난 입력은 400이며, 유효한 페이지에 사건이 없으면 빈 배열을 반환한다.
+응답은 `ApiResponse<PageResponse<CaseSummaryResponse>>` 형식이며 진술·목표 본문은 단건 조회에서만 제공한다.
+Offset 방식이므로 페이지 사이 사건 변경이 발생하면 항목 위치가 이동할 수 있다.
+
+삭제는 `deleted_at`, `hard_delete_after`, 증가한 버전을 기록하고 현재 분석 참조를 해제한 뒤
+`CASE_DELETED` outbox 이벤트를 같은 트랜잭션에 저장한다. 타인·없는 사건·기삭제 사건은 모두 404다.
+유예 기간은 `ops.runtime_settings['case.delete_grace_days']`(기본 7일)를 사용한다.
+사건과 연결 데이터는 RLS에 의해 즉시 숨겨지지만 실제 데이터는 유예 기간 동안 남는다.
+현재 영구 삭제 배치와 객체 저장소 파기 worker는 미구현이며, 204는 논리 삭제 완료만 의미한다.
+추후 worker는 작업 실행 전에 사건 삭제 여부를 재검증해 기존 OCR·AI 이벤트 실행을 중단하고,
+임시 원본의 기존 24시간 보관 한도를 지켜 파기한 뒤 영구 삭제 예정 시각에 연관 DB 데이터를 정리해야 한다.

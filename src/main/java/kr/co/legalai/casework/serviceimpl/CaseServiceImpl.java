@@ -3,6 +3,8 @@ package kr.co.legalai.casework.serviceimpl;
 import kr.co.legalai.casework.dto.request.CreateCaseRequest;
 import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
 import kr.co.legalai.casework.dto.response.CaseResponse;
+import kr.co.legalai.casework.dto.response.CaseSummaryResponse;
+import kr.co.legalai.common.response.PageResponse;
 import kr.co.legalai.casework.entity.CaseEntity;
 import kr.co.legalai.casework.repository.AnalysisRepository;
 import kr.co.legalai.casework.repository.CaseRepository;
@@ -88,6 +90,27 @@ public class CaseServiceImpl implements CaseService {
 
     private CaseEntity getRequiredCase(UUID caseId) {
         return caseRepository.findById(caseId).orElseThrow(CaseNotFoundException::new);
+    }
+
+    @Override
+    public PageResponse<CaseSummaryResponse> listCases(int page, int pageSize) {
+        if (page < 1 || page > 10_000 || pageSize < 1 || pageSize > 100) {
+            throw new IllegalArgumentException("페이지 범위를 확인해 주세요.");
+        }
+        return transaction.execute(userId -> {
+            var items = caseRepository.findPage(userId, page, pageSize);
+            boolean hasNext = items.size() > pageSize;
+            return new PageResponse<>(items.subList(0, Math.min(items.size(), pageSize)), page, pageSize, hasNext);
+        });
+    }
+
+    @Override
+    public void deleteCase(UUID caseId) {
+        transaction.execute(userId -> {
+            int version = caseRepository.softDelete(caseId).orElseThrow(CaseNotFoundException::new);
+            outboxRepository.save(UUID.randomUUID(), "CASE_DELETED", caseId, "case-deleted:" + caseId, version);
+            return Boolean.TRUE;
+        });
     }
 
     private CaseResponse toResponse(CaseEntity entity) {

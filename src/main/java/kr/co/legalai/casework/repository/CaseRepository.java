@@ -1,12 +1,14 @@
 package kr.co.legalai.casework.repository;
 
 import kr.co.legalai.casework.dto.request.CreateCaseRequest;
+import kr.co.legalai.casework.dto.response.CaseSummaryResponse;
 import kr.co.legalai.casework.entity.CaseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -57,6 +59,29 @@ public class CaseRepository {
                 ROW_MAPPER,
                 caseId
         ).stream().findFirst();
+    }
+
+    public List<CaseSummaryResponse> findPage(UUID ownerUserId, int page, int pageSize) {
+        return jdbcTemplate.query("""
+                SELECT id, title, status, user_party_role, version_no, created_at, updated_at
+                FROM casework.cases
+                WHERE owner_user_id = ? AND deleted_at IS NULL
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """, (result, rowNumber) -> new CaseSummaryResponse(
+                result.getObject("id", UUID.class),
+                result.getString("title"),
+                result.getString("status"),
+                result.getString("user_party_role"),
+                result.getInt("version_no"),
+                result.getTimestamp("created_at").toInstant(),
+                result.getTimestamp("updated_at").toInstant()
+        ), ownerUserId, pageSize + 1, ((long) page - 1) * pageSize);
+    }
+
+    public Optional<Integer> softDelete(UUID caseId) {
+        return Optional.ofNullable(jdbcTemplate.queryForObject(
+                "SELECT casework.soft_delete_case(?)", Integer.class, caseId));
     }
 
     public int update(UUID caseId, String originalStatement, int expectedVersion) {

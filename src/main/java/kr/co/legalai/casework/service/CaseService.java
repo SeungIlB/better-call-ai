@@ -3,6 +3,8 @@ package kr.co.legalai.casework.service;
 import kr.co.legalai.casework.dto.request.CreateCaseRequest;
 import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
 import kr.co.legalai.casework.dto.response.CaseResponse;
+import kr.co.legalai.casework.dto.response.CaseSummaryResponse;
+import kr.co.legalai.common.response.PageResponse;
 
 import java.util.UUID;
 
@@ -15,4 +17,8 @@ public interface CaseService {
     CaseResponse getCase(UUID caseId);
 
     CaseResponse updateCase(UUID caseId, UpdateCaseRequest request);
+
+    PageResponse<CaseSummaryResponse> listCases(int page, int pageSize);
+
+    void deleteCase(UUID caseId);
 }

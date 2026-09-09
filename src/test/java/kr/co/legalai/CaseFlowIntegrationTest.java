@@ -50,6 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -542,6 +543,234 @@ class CaseFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.version").value(1))
                 .andReturn().getResponse();
         return UUID.fromString(objectMapper.readTree(response.getContentAsString()).path("data").path("id").asString());
+    }
+
+    @Test
+    void caseListPaginatesOnlyOwnedActiveSummaries() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID ownerId = tokenUserId(owner);
+        mockMvc.perform(get("/api/v1/cases").header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(0))
+                .andExpect(jsonPath("$.data.page").value(1))
+                .andExpect(jsonPath("$.data.pageSize").value(20))
+                .andExpect(jsonPath("$.data.hasNext").value(false));
+        UUID first = createHttpCase(owner, ownerId);
+        UUID second = createHttpCase(owner, ownerId);
+        UUID third = createHttpCase(owner, ownerId);
+        createHttpCase(other, ownerId);
+        mockMvc.perform(get("/api/v1/cases").header("Authorization", "Bearer " + owner.accessToken())
+                        .param("pageSize", "2").param("userId", tokenUserId(other).toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.items[0].id").value(third.toString()))
+                .andExpect(jsonPath("$.data.items[1].id").value(second.toString()))
+                .andExpect(jsonPath("$.data.items[0].originalStatement").doesNotExist())
+                .andExpect(jsonPath("$.data.hasNext").value(true));
+        mockMvc.perform(get("/api/v1/cases").header("Authorization", "Bearer " + owner.accessToken())
+                        .param("page", "2").param("pageSize", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(first.toString()))
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.hasNext").value(false));
+        mockMvc.perform(get("/api/v1/cases").header("Authorization", "Bearer " + owner.accessToken())
+                        .param("page", "3").param("pageSize", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(0))
+                .andExpect(jsonPath("$.data.hasNext").value(false));
+        mockMvc.perform(patch("/api/v1/cases/{caseId}", first)
+                        .header("Authorization", "Bearer " + owner.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"originalStatement\":\"최근 수정 사건\",\"expectedVersion\":1}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/cases").header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(first.toString()));
+        // 한 문장에서 갱신하면 세 사건의 updated_at이 같아진다.
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement(
+                     "UPDATE casework.cases SET title = title WHERE owner_user_id = ?")) {
+            statement.setObject(1, ownerId);
+            assertEquals(3, statement.executeUpdate());
+        }
+        var orderedIds = List.of(first.toString(), second.toString(), third.toString()).stream()
+                .sorted(java.util.Comparator.reverseOrder()).toList();
+        mockMvc.perform(get("/api/v1/cases").header("Authorization", "Bearer " + owner.accessToken())
+                        .param("pageSize", "100"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(orderedIds.get(0)))
+                .andExpect(jsonPath("$.data.items[1].id").value(orderedIds.get(1)))
+                .andExpect(jsonPath("$.data.items[2].id").value(orderedIds.get(2)))
+                .andExpect(jsonPath("$.data.hasNext").value(false));
+    }
+
+    @Test
+    void deletionRollsBackWhenOutboxWriteFails() throws Exception {
+        var owner = registerTestUser();
+        UUID ownerId = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, ownerId);
+        String before = caseSnapshot(caseId);
+        // 삭제 이벤트 쓰기만 실패하도록 멱등 키 충돌을 만든다.
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO ops.outbox_events(event_type, aggregate_type, aggregate_id,
+                         idempotency_key, retention_expires_at)
+                     VALUES ('TEST_CONFLICT', 'case', ?, ?, now() + interval '1 day')
+                     """)) {
+            statement.setObject(1, caseId);
+            statement.setString(2, "case-deleted:" + caseId);
+            statement.executeUpdate();
+        }
+        authenticate(ownerId);
+        assertThrows(org.springframework.dao.DuplicateKeyException.class, () -> service.deleteCase(caseId));
+        assertEquals(before, caseSnapshot(caseId));
+        assertEquals(2, outboxCount(caseId));
+        assertEquals(caseId, service.getCase(caseId).id());
+    }
+
+    @Test
+    void deletionFunctionRejectsMissingUserAndAuthRole() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        String before = caseSnapshot(caseId);
+        assertEquals(null, jdbcTemplate.queryForObject(
+                "SELECT casework.soft_delete_case(?)", Integer.class, caseId));
+        try (var connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), "legal_ai_auth", "auth_test");
+             var statement = connection.prepareStatement("SELECT casework.soft_delete_case(?)")) {
+            statement.setObject(1, caseId);
+            assertEquals("42501", assertThrows(SQLException.class, statement::executeQuery).getSQLState());
+        }
+        assertEquals(before, caseSnapshot(caseId));
+    }
+
+    @Test
+    void databaseDeletionSerializesConcurrentRequests() throws Exception {
+        var owner = registerTestUser();
+        UUID ownerId = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, ownerId);
+        Callable<Integer> deleteRequest = () -> {
+            // 서로 다른 실제 DB 연결에서 동시에 갱신해 함수의 행 잠금을 검증한다.
+            try (var connection = appConnection()) {
+                connection.setAutoCommit(false);
+                try (var scope = connection.prepareStatement("SELECT set_config('app.user_id', ?, true)")) {
+                    scope.setString(1, ownerId.toString());
+                    scope.execute();
+                }
+                try (var statement = connection.prepareStatement("SELECT casework.soft_delete_case(?)")) {
+                    statement.setObject(1, caseId);
+                    Integer version;
+                    try (var result = statement.executeQuery()) {
+                        result.next();
+                        version = result.getObject(1, Integer.class);
+                    }
+                    connection.commit();
+                    return version;
+                } finally {
+                    connection.rollback();
+                }
+            }
+        };
+        var results = concurrently(List.of(deleteRequest, deleteRequest));
+        assertEquals(1, results.stream().filter(java.util.Objects::isNull).count());
+        assertEquals(1, results.stream().filter(Integer.valueOf(2)::equals).count());
+    }
+
+    @Test
+    void caseListRejectsInvalidPaginationAndMissingAuthentication() throws Exception {
+        var owner = registerTestUser();
+        for (String query : List.of("page=0", "page=-1", "page=10001", "page=abc",
+                "pageSize=0", "pageSize=101", "pageSize=abc")) {
+            mockMvc.perform(get("/api/v1/cases?" + query)
+                            .header("Authorization", "Bearer " + owner.accessToken()))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("COMMON_001"));
+        }
+        mockMvc.perform(get("/api/v1/cases")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void softDeleteHidesCaseAndChildrenAndSchedulesOneDeletionEvent() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID ownerId = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, ownerId);
+        UUID fileId = UUID.randomUUID();
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO casework.files(id, case_id, uploaded_by, file_type, original_name,
+                         mime_type, size_bytes, sha256) VALUES (?, ?, ?, 'document', 'contract.pdf',
+                         'application/pdf', 10, ?)
+                     """)) {
+            statement.setObject(1, fileId);
+            statement.setObject(2, caseId);
+            statement.setObject(3, ownerId);
+            statement.setString(4, "c".repeat(64));
+            statement.executeUpdate();
+        }
+        String before = caseSnapshot(caseId);
+        mockMvc.perform(delete("/api/v1/cases/{caseId}", caseId)).andExpect(status().isUnauthorized());
+        for (UUID target : List.of(caseId, UUID.randomUUID())) {
+            mockMvc.perform(delete("/api/v1/cases/{caseId}", target)
+                            .header("Authorization", "Bearer " + other.accessToken()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("CASE_001"));
+        }
+        assertEquals(before, caseSnapshot(caseId));
+        assertEquals(1, outboxCount(caseId));
+        mockMvc.perform(delete("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(patch("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"originalStatement\":\"삭제 후 수정\",\"expectedVersion\":2}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(delete("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/cases").header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(0));
+        assertEquals(2, outboxCount(caseId));
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT deleted_at IS NOT NULL AS deleted,
+                            hard_delete_after = deleted_at + interval '7 days' AS grace_period,
+                            version_no,
+                            (SELECT count(*) FROM ops.outbox_events
+                             WHERE aggregate_id = c.id AND event_type = 'CASE_DELETED'
+                               AND payload->>'version' = '2') AS events
+                     FROM casework.cases c WHERE id = ?
+                     """)) {
+            statement.setObject(1, caseId);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertTrue(result.getBoolean("deleted"));
+                assertTrue(result.getBoolean("grace_period"));
+                assertEquals(2, result.getInt("version_no"));
+                assertEquals(1, result.getInt("events"));
+            }
+        }
+        try (var connection = appConnection()) {
+            connection.setAutoCommit(false);
+            try (var scope = connection.prepareStatement("SELECT set_config('app.user_id', ?, true)")) {
+                scope.setString(1, ownerId.toString());
+                scope.execute();
+            }
+            try (var statement = connection.prepareStatement("SELECT count(*) FROM casework.files WHERE id = ?")) {
+                statement.setObject(1, fileId);
+                try (var result = statement.executeQuery()) {
+                    result.next();
+                    assertEquals(0, result.getInt(1));
+                }
+            } finally {
+                connection.rollback();
+            }
+        }
     }
 
     private UUID storedCaseOwner(UUID caseId) throws SQLException {
