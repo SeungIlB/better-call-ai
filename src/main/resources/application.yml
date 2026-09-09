@@ -37,3 +37,8 @@ management:
 logging:
   pattern:
     correlation: "[%X{traceId:-}] "
+
+integrations:
+  law-open-data:
+    base-url: ${LAW_OPEN_DATA_BASE_URL:https://www.law.go.kr/DRF}
+    oc: ${LAW_OPEN_DATA_OC:}

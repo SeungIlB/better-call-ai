@@ -26,9 +26,19 @@ public class GlobalExceptionHandler {
         return response(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "접근 권한이 없습니다.");
     }
 
-    @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
+    @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class, IllegalArgumentException.class})
     ResponseEntity<ErrorResponse> validation() {
         return response(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "요청 값을 확인해 주세요.");
+    }
+
+    @ExceptionHandler(IntegrationNotConfiguredException.class)
+    ResponseEntity<ErrorResponse> integrationNotConfigured(IntegrationNotConfiguredException exception) {
+        return response(HttpStatus.SERVICE_UNAVAILABLE, "INTEGRATION_NOT_CONFIGURED", exception.getMessage());
+    }
+
+    @ExceptionHandler(ExternalApiException.class)
+    ResponseEntity<ErrorResponse> externalApi(ExternalApiException exception) {
+        return response(HttpStatus.BAD_GATEWAY, "EXTERNAL_API_ERROR", exception.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

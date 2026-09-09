@@ -1,0 +1,93 @@
+package kr.co.legalai.legaldata.repository;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import kr.co.legalai.common.exception.ExternalApiException;
+import kr.co.legalai.common.exception.IntegrationNotConfiguredException;
+import kr.co.legalai.legaldata.entity.LegalDocumentType;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Repository;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+import java.util.function.Supplier;
+
+/**
+ * 법제처 국가법령정보 공동활용 API의 검색·본문 조회를 담당한다.
+ */
+@Repository
+public class LawOpenDataRepository {
+    private final RestClient restClient;
+    private final ObjectMapper objectMapper;
+    private final String oc;
+
+    public LawOpenDataRepository(
+            ObjectMapper objectMapper,
+            @Value("${integrations.law-open-data.base-url:https://www.law.go.kr/DRF}") String baseUrl,
+            @Value("${integrations.law-open-data.oc:}") String oc
+    ) {
+        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+        this.objectMapper = objectMapper;
+        this.oc = oc;
+    }
+
+    public JsonNode search(LegalDocumentType type, String query, int page, int pageSize) {
+        requireConfigured();
+        String response = exchange(() -> restClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/lawSearch.do")
+                        .queryParam("OC", oc)
+                        .queryParam("target", type.apiTarget())
+                        .queryParam("type", "JSON")
+                        .queryParam("query", query)
+                        .queryParam("display", pageSize)
+                        .queryParam("page", page)
+                        .build())
+                .retrieve()
+                .body(String.class));
+        return readJson(response);
+    }
+
+    public JsonNode findDocument(LegalDocumentType type, String externalId) {
+        requireConfigured();
+        String response = exchange(() -> restClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/lawService.do")
+                        .queryParam("OC", oc)
+                        .queryParam("target", type.apiTarget())
+                        .queryParam("type", "JSON")
+                        .queryParam("ID", externalId)
+                        .build())
+                .retrieve()
+                .body(String.class));
+        return readJson(response);
+    }
+
+    private void requireConfigured() {
+        if (oc == null || oc.isBlank()) {
+            throw new IntegrationNotConfiguredException(
+                    "국가법령정보 공동활용 API 식별자(LAW_OPEN_DATA_OC)가 설정되지 않았습니다."
+            );
+        }
+    }
+
+    private JsonNode readJson(String response) {
+        if (response == null || response.isBlank()) {
+            throw new ExternalApiException("국가법령정보 API가 빈 응답을 반환했습니다.");
+        }
+        try {
+            return objectMapper.readTree(response);
+        } catch (JacksonException exception) {
+            throw new ExternalApiException("국가법령정보 API 응답을 처리하지 못했습니다.", exception);
+        }
+    }
+
+    private String exchange(Supplier<String> request) {
+        try {
+            return request.get();
+        } catch (RestClientException exception) {
+            throw new ExternalApiException("국가법령정보 API 호출에 실패했습니다.", exception);
+        }
+    }
+}

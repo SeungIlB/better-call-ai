@@ -100,6 +100,53 @@ paths:
       responses:
         '202':
           description: 문서 생성 접수
+  /api/v1/legal-data/{type}:
+    parameters:
+      - $ref: '#/components/parameters/LegalDocumentType'
+    get:
+      operationId: searchLegalData
+      summary: 법제처 공개 법령·판례 검색
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 정규화된 검색 결과
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LegalSearchResult' }
+        '502':
+          description: 국가법령정보 공동활용 API 호출 또는 응답 처리 실패
+        '503':
+          description: 국가법령정보 공동활용 API 식별자 미설정
+  /api/v1/legal-data/{type}/{externalId}:
+    parameters:
+      - $ref: '#/components/parameters/LegalDocumentType'
+      - name: externalId
+        in: path
+        required: true
+        schema: { type: string, maxLength: 255 }
+    get:
+      operationId: getLegalDocument
+      summary: 법제처 공개 법령·판례 본문 조회 및 정규화
+      responses:
+        '200':
+          description: 정규화된 법률 문서
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LegalDocument' }
+        '502':
+          description: 국가법령정보 공동활용 API 호출 또는 응답 처리 실패
+        '503':
+          description: 국가법령정보 공동활용 API 식별자 미설정
 components:
   securitySchemes:
     bearerAuth:
@@ -112,6 +159,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    LegalDocumentType:
+      name: type
+      in: path
+      required: true
+      schema: { type: string, enum: [law, precedent] }
   responses:
     BadRequest:
       description: 잘못된 요청
@@ -151,6 +203,37 @@ components:
         version: { type: integer }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    LegalSearchItem:
+      type: object
+      required: [externalId, title]
+      properties:
+        externalId: { type: string }
+        title: { type: string }
+        caseNumber: { type: [string, 'null'] }
+        publisher: { type: [string, 'null'] }
+        publishedOrDecisionDate: { type: [string, 'null'], format: date }
+        effectiveDate: { type: [string, 'null'], format: date }
+        sourceUrl: { type: [string, 'null'], format: uri }
+    LegalSearchResult:
+      type: object
+      required: [type, query, page, pageSize, totalCount, items]
+      properties:
+        type: { type: string, enum: [LAW, PRECEDENT] }
+        query: { type: string }
+        page: { type: integer }
+        pageSize: { type: integer }
+        totalCount: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/LegalSearchItem' }
+    LegalDocument:
+      allOf:
+        - $ref: '#/components/schemas/LegalSearchItem'
+        - type: object
+          required: [type, normalizedText]
+          properties:
+            type: { type: string, enum: [LAW, PRECEDENT] }
+            normalizedText: { type: string }
     ApiError:
       type: object
       required: [code, message, occurredAt]

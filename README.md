@@ -9,12 +9,13 @@
 - JWT Resource Server 보안 기본값
 - 요청 트랜잭션마다 `app.user_id`를 주입하는 PostgreSQL RLS 경계
 - 사건 생성·조회·진술 수정 vertical slice
+- 법제처 국가법령정보 공동활용 API의 법령·판례 검색 및 본문 정규화
 - 진술 수정 시 optimistic lock, 기존 분석 stale 처리, outbox 발행
 - 공통 오류 응답과 trace ID
 - OpenAPI 3.1 계약
 - Testcontainers 기반 실제 PostgreSQL 통합 테스트
 
-OCR 공급자, LLM/RAG, 객체 저장소, outbox worker와 보존 배치는 인터페이스 구현 전 단계입니다.
+OCR 공급자, OpenAI Vector Store/RAG, 객체 저장소, outbox worker와 보존 배치는 인터페이스 구현 전 단계입니다.
 
 ## 기술 기준
 
@@ -44,6 +45,8 @@ Invoke-RestMethod http://localhost:8080/actuator/health
 ```
 
 애플리케이션 API는 UUID 형식의 JWT `sub`가 필요합니다. 로컬 인증 공급자 또는 테스트용 JWKS 주소를 `.env`에 설정합니다.
+
+법령·판례 검색은 [국가법령정보 공동활용](https://open.law.go.kr/) 승인 후 발급 기준에 맞는 `LAW_OPEN_DATA_OC`를 `.env`에 설정합니다. 값이 없어도 서버와 다른 기능은 기동되며, 법률 데이터 API 호출만 `503 INTEGRATION_NOT_CONFIGURED`를 반환합니다.
 
 ## 검증
 
@@ -89,6 +92,13 @@ kr.co.legalai
    └─ dto/
       ├─ request/                   API 요청 DTO
       └─ response/                  API 응답 DTO
+└─ legaldata/
+   ├─ controller/                  법령·판례 REST Controller
+   ├─ service/                     법률 데이터 Service interface
+   ├─ serviceimpl/                 외부 응답 정규화 구현
+   ├─ repository/                  법제처 Open API client
+   ├─ entity/                      지원 문서 유형
+   └─ dto/response/                정규화 응답 DTO
 ```
 
 요청 흐름은 `Controller → Service → ServiceImpl → Repository → PostgreSQL`로 고정합니다.
@@ -98,6 +108,9 @@ kr.co.legalai
 - `POST /api/v1/cases` — 사건 생성
 - `GET /api/v1/cases/{caseId}` — 사건 단건 조회
 - `PATCH /api/v1/cases/{caseId}` — 사건 진술 수정
+- `GET /api/v1/legal-data/law?query=민법` — 법령 검색
+- `GET /api/v1/legal-data/precedent?query=임대차%20수선의무` — 판례 검색
+- `GET /api/v1/legal-data/{type}/{externalId}` — 법령·판례 본문 정규화 조회
 
 ## 다음 구현 순서
 
@@ -105,6 +118,7 @@ kr.co.legalai
 2. 업로드 세션·malware scan·OCR outbox worker
 3. OCR 수정본 확정과 원본 purge
 4. 확인 질문·사실 충돌 해결
-5. RAG 검색과 분석 실행
-6. 대응 계획·문서 생성
-7. 보존기간·탈퇴 purge job
+5. 법률 문서 적재·구조 기반 청킹·OpenAI Vector Store 연동
+6. RAG 검색과 분석 실행
+7. 대응 계획·문서 생성
+8. 보존기간·탈퇴 purge job
