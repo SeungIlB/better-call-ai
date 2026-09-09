@@ -1,16 +1,18 @@
-# Generated from gitignore.io templates: Java, Windows, Linux, IntelliJ.
+# Better Call AI: Java 21, Spring Boot, Gradle, PostgreSQL and Docker.
 
-### Gradle ###
+### Gradle / Java build output ###
 HELP.md
 .gradle/
-build/
+**/build/
 !gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-### Java ###
+!gradle/wrapper/gradle-wrapper.properties
+out/
+bin/
+classes/
+generated/
+.apt_generated/
+.factorypath
 *.class
-*.log
 *.ctxt
 .mtj.tmp/
 *.jar
@@ -21,16 +23,22 @@ build/
 *.tar.gz
 *.rar
 !gradle/wrapper/gradle-wrapper.jar
+
+### JVM diagnostics ###
+*.log
+*.hprof
 hs_err_pid*
 replay_pid*
+heapdump*
+*.pid
 
-### IntelliJ IDEA ###
+### IntelliJ IDEA / JetBrains ###
 .idea/
 *.iws
 *.iml
 *.ipr
-out/
 .idea_modules/
+.fleet/
 atlassian-ide-plugin.xml
 com_crashlytics_export_strings.xml
 crashlytics.properties
@@ -39,16 +47,11 @@ fabric.properties
 cmake-build-*/
 
 ### Eclipse / Spring Tool Suite ###
-.apt_generated/
 .classpath
-.factorypath
 .project
 .settings/
 .springBeans
 .sts4-cache/
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
 
 ### NetBeans ###
 /nbproject/private/
@@ -60,7 +63,58 @@ bin/
 ### VS Code ###
 .vscode/
 
-### Windows ###
+### Local configuration and secrets ###
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+application-local.yml
+application-local.yaml
+application-local.properties
+application-secret.yml
+application-secret.yaml
+application-secret.properties
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+/secrets/
+/config/secrets/
+/src/main/resources/secrets/
+
+### Runtime-generated application data ###
+/logs/
+/tmp/
+/temp/
+/uploads/
+/storage/
+/postgres-data/
+/data/runtime/
+/data/uploads/
+
+### Test and quality reports ###
+test-results/
+coverage/
+jacoco/
+*.exec
+allure-results/
+allure-report/
+.scannerwork/
+.sonarlint/
+
+### Docker and local infrastructure state ###
+.docker/
+docker-compose.override.yml
+compose.override.yml
+
+### Operating systems ###
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
 Thumbs.db
 Thumbs.db:encryptable
 ehthumbs.db
@@ -74,48 +128,8 @@ $RECYCLE.BIN/
 *.msm
 *.msp
 *.lnk
-
-### Linux ###
 *~
 .fuse_hidden*
 .directory
 .Trash-*
 .nfs*
-
-### macOS ###
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
-
-### Local configuration and secrets ###
-.env
-.env.*
-!.env.example
-application-local.yml
-application-local.yaml
-application-local.properties
-application-secret.yml
-application-secret.yaml
-application-secret.properties
-*.pem
-*.key
-*.p12
-*.pfx
-*.jks
-*.keystore
-secrets/
-
-### Runtime-generated data ###
-logs/
-tmp/
-temp/
-uploads/
-storage/
-data/
-
-### Test and tooling reports ###
-.scannerwork/
-.sonarlint/
-test-results/
-coverage/

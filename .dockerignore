@@ -1,6 +1,99 @@
-.git
-.gradle
-.idea
-build
+# Version control
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# IDE and editor state
+.idea/
+.vscode/
+.fleet/
+.settings/
+.classpath
+.project
 *.iml
+*.iws
+*.ipr
+
+# Local agent and AI tool instructions/state
+AGENTS.md
+.agents/
+.codex/
+.claude/
+
+# Gradle and Java output
+.gradle/
+**/build/
+out/
+bin/
+classes/
+generated/
+*.class
+*.jar
+*.war
+*.hprof
+hs_err_pid*
+replay_pid*
+
+# Keep the Gradle Wrapper JAR required by the build stage
+!gradle/wrapper/gradle-wrapper.jar
+
+# Tests and reports are not required by the current bootJar image build
+src/test/
+test-results/
+coverage/
+jacoco/
+*.exec
+allure-results/
+allure-report/
+.scannerwork/
+.sonarlint/
+
+# Local secrets and environment files
 .env
+.env.*
+.envrc
+.direnv/
+application-local.yml
+application-local.yaml
+application-local.properties
+application-secret.yml
+application-secret.yaml
+application-secret.properties
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+config/secrets/
+src/main/resources/secrets/
+
+# Runtime and infrastructure state
+logs/
+tmp/
+temp/
+uploads/
+storage/
+postgres-data/
+data/runtime/
+data/uploads/
+.docker/
+
+# Files not copied or used by the application image
+api/
+docker/
+docs/
+README.md
+compose.yml
+compose.*.yml
+gradlew.bat
+
+# Operating-system metadata
+.DS_Store
+._*
+Thumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*~
