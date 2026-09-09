@@ -32,7 +32,7 @@ OCR 공급자, OpenAI Vector Store/RAG, 객체 저장소, outbox worker와 보�
 
 ## 로컬 실행
 
-개발용 비밀번호는 로컬 컨테이너 전용입니다. 운영 환경에 복사하지 않습니다.
+`.env.example`을 복사한 뒤 세 데이터베이스 비밀번호를 각기 다른 로컬 값으로 변경합니다. 예제 값을 운영 환경에 사용하지 않습니다. 비밀번호가 비어 있으면 애플리케이션과 PostgreSQL 컨테이너는 기동에 실패합니다.
 
 ```powershell
 Copy-Item .env.example .env
