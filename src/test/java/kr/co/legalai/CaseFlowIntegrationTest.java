@@ -23,6 +23,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 class CaseFlowIntegrationTest {
@@ -139,9 +140,128 @@ class CaseFlowIntegrationTest {
                        )
                      """)) {
             result.next();
-            assertEquals(40, result.getInt("table_count"));
+            assertEquals(41, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(42, result.getInt("described_column_count"));
+            assertEquals(43, result.getInt("described_column_count"));
+        }
+    }
+
+    @Test
+    void securityAndAiGuardrailsAreInstalled() throws SQLException {
+        try (Connection connection = adminConnection();
+             var statement = connection.createStatement();
+             var result = statement.executeQuery("""
+                     SELECT system_prompt, output_schema, model_policy
+                     FROM aiops.prompt_versions
+                     WHERE prompt_key = 'case_analysis' AND is_active
+                     """)) {
+            result.next();
+            assertTrue(result.getString("system_prompt").contains("신뢰할 수 없는 데이터"));
+            assertTrue(result.getString("system_prompt").contains("사건번호"));
+            assertTrue(result.getString("output_schema").contains("insufficient_evidence"));
+            assertTrue(result.getString("model_policy").contains("max_output_tokens"));
+        }
+
+        try (Connection connection = adminConnection();
+             var statement = connection.createStatement();
+             var result = statement.executeQuery("""
+                     SELECT count(*)
+                     FROM ops.runtime_settings
+                     WHERE (setting_key = 'rag.max_results' AND value_json = '8'::jsonb)
+                        OR (setting_key = 'model.max_output_tokens' AND value_json = '1200'::jsonb)
+                        OR (setting_key = 'outbox.max_attempts' AND value_json = '5'::jsonb)
+                     """)) {
+            result.next();
+            assertEquals(3, result.getInt(1));
+        }
+    }
+
+    @Test
+    void databaseRejectsPlainPasswordsRawRefreshTokensAndPathNames() throws SQLException {
+        try (Connection connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO identity.auth_identities(
+                         user_id, provider, provider_subject, password_hash
+                     ) VALUES (?, 'local', 'unsafe-password-test', 'plain-password')
+                     """)) {
+            statement.setObject(1, USER_A);
+            assertThrows(SQLException.class, statement::executeUpdate);
+        }
+
+        try (Connection connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO identity.refresh_tokens(user_id, token_hash, expires_at)
+                     VALUES (?, 'raw-refresh-token', now() + interval '1 day')
+                     """)) {
+            statement.setObject(1, USER_A);
+            assertThrows(SQLException.class, statement::executeUpdate);
+        }
+
+        authenticate(USER_A);
+        var created = service.createCase(new CreateCaseRequest(
+                "파일명 검증 사건",
+                "임차인",
+                null,
+                "누수 증거를 정리합니다."
+        ));
+        try (Connection connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO casework.files(
+                         case_id, uploaded_by, file_type, original_name,
+                         mime_type, size_bytes, sha256
+                     ) VALUES (?, ?, 'document', '../contract.pdf',
+                               'application/pdf', 10, ?)
+                     """)) {
+            statement.setObject(1, created.id());
+            statement.setObject(2, USER_A);
+            statement.setString(3, "a".repeat(64));
+            assertThrows(SQLException.class, statement::executeUpdate);
+        }
+    }
+
+    @Test
+    void anotherUserCannotReadFileMetadata() throws SQLException {
+        authenticate(USER_A);
+        var created = service.createCase(new CreateCaseRequest(
+                "파일 소유권 사건",
+                "임차인",
+                null,
+                "계약서 OCR을 준비합니다."
+        ));
+        UUID fileId = UUID.randomUUID();
+
+        try (Connection connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO casework.files(
+                         id, case_id, uploaded_by, file_type, original_name,
+                         mime_type, size_bytes, sha256
+                     ) VALUES (?, ?, ?, 'document', 'contract.pdf',
+                               'application/pdf', 10, ?)
+                     """)) {
+            statement.setObject(1, fileId);
+            statement.setObject(2, created.id());
+            statement.setObject(3, USER_A);
+            statement.setString(4, "b".repeat(64));
+            statement.executeUpdate();
+        }
+
+        try (Connection connection = appConnection()) {
+            connection.setAutoCommit(false);
+            try (var scope = connection.prepareStatement("SELECT set_config('app.user_id', ?, true)")) {
+                scope.setString(1, USER_B.toString());
+                scope.execute();
+            }
+            try (var statement = connection.prepareStatement(
+                    "SELECT count(*) FROM casework.files WHERE id = ?"
+            )) {
+                statement.setObject(1, fileId);
+                try (var result = statement.executeQuery()) {
+                    result.next();
+                    assertEquals(0, result.getInt(1));
+                }
+            } finally {
+                connection.rollback();
+            }
         }
     }
 
@@ -169,6 +289,14 @@ class CaseFlowIntegrationTest {
                 POSTGRES.getJdbcUrl(),
                 POSTGRES.getUsername(),
                 POSTGRES.getPassword()
+        );
+    }
+
+    private Connection appConnection() throws SQLException {
+        return DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(),
+                "legal_ai_app",
+                "app_test"
         );
     }
 }
