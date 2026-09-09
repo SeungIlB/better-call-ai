@@ -66,7 +66,11 @@ class OpenAiChatRepositoryTest {
         assertEquals(15, answer.outputTokens());
         assertFalse(sent.get().path("store").asBoolean());
         assertFalse(sent.get().path("stream").asBoolean());
-        assertEquals(2000, sent.get().path("max_output_tokens").asInt());
+        assertEquals(1200, sent.get().path("max_output_tokens").asInt());
+        String instructions = sent.get().path("instructions").asString();
+        assertTrue(instructions.contains("600자 이내"));
+        assertTrue(instructions.contains("이미 답한 질문은 반복하지 않는다"));
+        assertTrue(instructions.contains("불확실성·안전 안내를 생략하지 않는다"));
         assertEquals("user", sent.get().path("input").get(0).path("role").asString());
         assertTrue(sent.get().path("instructions").asString().contains("법령·조문·사건번호·출처 링크를 생성하지 않는다"));
         assertFalse(sent.get().has("tools"));
