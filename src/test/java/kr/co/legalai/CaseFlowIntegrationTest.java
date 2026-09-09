@@ -26,6 +26,16 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockMultipartFile;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import kr.co.legalai.file.service.FileCleanupService;
+import kr.co.legalai.file.repository.FileCleanupRepository;
+import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import tools.jackson.databind.ObjectMapper;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -51,6 +61,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -61,6 +72,8 @@ class CaseFlowIntegrationTest {
     private static final UUID USER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final KeyPair JWT_KEY_PAIR = generateRsaKeyPair();
     private static final String TEST_SECRET = Base64.getEncoder().encodeToString(new byte[32]);
+    @org.junit.jupiter.api.io.TempDir
+    static Path uploadRoot;
 
     private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(
             DockerImageName.parse("pgvector/pgvector:pg16")
@@ -105,11 +118,19 @@ class CaseFlowIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private FileCleanupService fileCleanupService;
+
+    @Autowired
+    private FileCleanupRepository fileCleanupRepository;
+
+    @Autowired
     private IdentityCrypto identityCrypto;
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("storage.local.root", () -> uploadRoot.toString());
+        registry.add("storage.local.cleanup-enabled", () -> "false");
         registry.add("spring.datasource.username", () -> "legal_ai_app");
         registry.add("spring.datasource.password", () -> "app_test");
         // 동일 연결을 재사용해 사용자 범위가 다음 요청으로 새지 않는지도 검증한다.
@@ -201,7 +222,7 @@ class CaseFlowIntegrationTest {
             result.next();
             assertEquals(42, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(47, result.getInt("described_column_count"));
+            assertEquals(48, result.getInt("described_column_count"));
         }
     }
 
@@ -945,6 +966,240 @@ class CaseFlowIntegrationTest {
         var outcomes = concurrently(List.of(attempt, attempt, attempt, attempt, attempt, attempt));
         assertEquals(4, outcomes.stream().filter(ErrorCode.INVALID_CREDENTIALS::equals).count());
         assertEquals(2, outcomes.stream().filter(code -> code.code().equals("AUTH_008")).count());
+    }
+
+    @Test
+    void uploadedFileMetadataIsOwnedAndStorageDetailsArePrivate() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        byte[] bytes = testPng();
+        UUID fileId = uploadTestFile(owner, caseId, new MockMultipartFile("file", "증거.png", "image/png", bytes));
+        assertTrue(Files.exists(uploadRoot.resolve(fileId + ".upload")));
+        assertEquals(1, outboxCount(fileId));
+        mockMvc.perform(get("/api/v1/cases/{caseId}/files/{fileId}", caseId, fileId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pageCount").value(1))
+                .andExpect(jsonPath("$.data.sizeBytes").value(bytes.length))
+                .andExpect(jsonPath("$.data.storageBucket").doesNotExist())
+                .andExpect(jsonPath("$.data.objectKey").doesNotExist())
+                .andExpect(jsonPath("$.data.path").doesNotExist());
+        mockMvc.perform(get("/api/v1/cases/{caseId}/files/{fileId}", caseId, fileId)
+                        .header("Authorization", "Bearer " + other.accessToken()))
+                .andExpect(status().isNotFound());
+        UUID otherCase = createHttpCase(owner, tokenUserId(owner));
+        mockMvc.perform(get("/api/v1/cases/{caseId}/files/{fileId}", otherCase, fileId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .file(new MockMultipartFile("file", "증거.png", "image/png", bytes))
+                        .header("Authorization", "Bearer " + other.accessToken()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .file(new MockMultipartFile("file", "증거.png", "image/png", bytes)))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isBadRequest());
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("SELECT sha256, uploaded_by FROM casework.files WHERE id = ?")) {
+            statement.setObject(1, fileId);
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals(java.util.HexFormat.of().formatHex(
+                        java.security.MessageDigest.getInstance("SHA-256").digest(bytes)), row.getString(1));
+                assertEquals(tokenUserId(owner), row.getObject(2, UUID.class));
+            }
+        }
+    }
+
+    @Test
+    void invalidUploadsLeaveNoOriginalOrMetadata() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        long before;
+        try (var files = Files.list(uploadRoot)) {
+            before = files.count();
+        }
+        for (var file : List.of(
+                new MockMultipartFile("file", "../증거.png", "image/png", testPng()),
+                new MockMultipartFile("file", "증거.png", "application/pdf", testPng()),
+                new MockMultipartFile("file", "증거.png", "image/png", new byte[20]),
+                new MockMultipartFile("file", "증거.pdf", "application/pdf", "%PDF-1.7 broken".getBytes()),
+                new MockMultipartFile("file", "증거.pdf", "application/pdf", testPdf(31)),
+                new MockMultipartFile("file", "증거.pdf", "application/pdf", testPdf(0)),
+                new MockMultipartFile("file", "증거.png", "image/png", new byte[0]))) {
+            mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+                            .header("Authorization", "Bearer " + owner.accessToken()))
+                    .andExpect(status().isBadRequest());
+        }
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .file(new MockMultipartFile("file", "증거.png", "image/png", new byte[20 * 1024 * 1024 + 1]))
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().is(413))
+                .andExpect(jsonPath("$.code").value("FILE_003"));
+        try (var files = Files.list(uploadRoot)) {
+            assertEquals(before, files.count());
+        }
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("SELECT count(*) FROM casework.files WHERE case_id = ?")) {
+            statement.setObject(1, caseId);
+            try (var row = statement.executeQuery()) {
+                row.next();
+                assertEquals(0, row.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void pdfPageBoundaryAndCaseFileCountAreEnforced() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID pdfId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "계약.pdf", "application/pdf", testPdf(30)));
+        mockMvc.perform(get("/api/v1/cases/{caseId}/files/{fileId}", caseId, pdfId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.pageCount").value(30));
+        for (int i = 1; i < 10; i++) {
+            uploadTestFile(owner, caseId, new MockMultipartFile("file", "증거.png", "image/png", testPng()));
+        }
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FILE_005"));
+    }
+
+    @Test
+    void caseTotalBytesAreLimitedIndependentlyOfFileCount() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        for (int i = 0; i < 5; i++) {
+            uploadTestFile(owner, caseId, new MockMultipartFile("file", "증거.png", "image/png", testPng()));
+        }
+        // 큰 파일 다섯 개의 메타데이터로 합계 100MiB 경계만 재현한다.
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement(
+                     "UPDATE casework.files SET size_bytes = 20971520 WHERE case_id = ?")) {
+            statement.setObject(1, caseId);
+            assertEquals(5, statement.executeUpdate());
+        }
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FILE_005"));
+    }
+
+    @Test
+    void expiredAndDeletedCaseOriginalsArePurgedAndOrphansAreCleaned() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID expiredId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "증거.png", "image/png", testPng()));
+        makeFilePurgeDue(expiredId);
+        fileCleanupService.cleanup();
+        assertTrue(!Files.exists(uploadRoot.resolve(expiredId + ".upload")));
+        assertPurgeState(expiredId, "purged", 1);
+        fileCleanupService.cleanup();
+        assertPurgeState(expiredId, "purged", 1);
+
+        UUID deletedId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "증거.png", "image/png", testPng()));
+        mockMvc.perform(delete("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/cases/{caseId}/files/{fileId}", caseId, deletedId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNotFound());
+        fileCleanupService.cleanup();
+        assertTrue(!Files.exists(uploadRoot.resolve(deletedId + ".upload")));
+        assertPurgeState(deletedId, "purged", 1);
+
+        Path orphan = Files.createFile(uploadRoot.resolve(UUID.randomUUID() + ".upload"));
+        Files.setLastModifiedTime(orphan, FileTime.from(Instant.now().minusSeconds(25 * 3600)));
+        Path unrelated = Files.createFile(uploadRoot.resolve("unrelated-" + UUID.randomUUID() + ".txt"));
+        Files.setLastModifiedTime(unrelated, FileTime.from(Instant.now().minusSeconds(25 * 3600)));
+        fileCleanupService.cleanup();
+        assertTrue(!Files.exists(orphan));
+        assertTrue(Files.exists(unrelated));
+    }
+
+    @Test
+    void purgeFailuresStopAfterFiveAttempts() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID fileId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "증거.png", "image/png", testPng()));
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            makeFilePurgeDue(fileId);
+            assertTrue(fileCleanupRepository.candidates().contains(fileId));
+            fileCleanupRepository.record(fileId, false);
+            assertPurgeState(fileId, attempt == 5 ? "failed" : "retrying", attempt);
+            assertTrue(!fileCleanupRepository.candidates().contains(fileId));
+        }
+        makeFilePurgeDue(fileId);
+        assertTrue(!fileCleanupRepository.candidates().contains(fileId));
+        fileCleanupRepository.record(fileId, false);
+        assertPurgeState(fileId, "failed", 5);
+        assertTrue(Files.exists(uploadRoot.resolve(fileId + ".upload")));
+    }
+
+    private void makeFilePurgeDue(UUID fileId) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     UPDATE casework.files SET storage_expires_at = now() - interval '1 second',
+                         purge_next_retry_at = now() - interval '1 second' WHERE id = ?
+                     """)) {
+            statement.setObject(1, fileId);
+            assertEquals(1, statement.executeUpdate());
+        }
+    }
+
+    private void assertPurgeState(UUID fileId, String state, int attempts) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT purge_status, purge_attempt_count, storage_bucket, object_key, purged_at
+                     FROM casework.files WHERE id = ?
+                     """)) {
+            statement.setObject(1, fileId);
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals(state, row.getString(1));
+                assertEquals(attempts, row.getInt(2));
+                if (state.equals("purged")) {
+                    assertEquals(null, row.getString(3));
+                    assertEquals(null, row.getString(4));
+                    assertTrue(row.getTimestamp(5) != null);
+                }
+            }
+        }
+    }
+
+    private UUID uploadTestFile(AuthTokenResponse owner, UUID caseId, MockMultipartFile file) throws Exception {
+        String response = mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.lifecycleStatus").value("UPLOADED"))
+                .andExpect(jsonPath("$.data.malwareStatus").value("pending"))
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(objectMapper.readTree(response).path("data").path("id").asString());
+    }
+
+    private byte[] testPng() throws Exception {
+        var output = new ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(
+                2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", output);
+        return output.toByteArray();
+    }
+
+    private byte[] testPdf(int pages) throws Exception {
+        try (var document = new PDDocument(); var output = new ByteArrayOutputStream()) {
+            for (int i = 0; i < pages; i++) {
+                document.addPage(new PDPage());
+            }
+            document.save(output);
+            return output.toByteArray();
+        }
     }
 
     private AuthTokenResponse registerTestUser() {

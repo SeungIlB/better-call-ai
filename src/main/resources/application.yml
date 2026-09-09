@@ -1,6 +1,11 @@
 spring:
   application:
     name: better-call-ai
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 21MB
+      file-size-threshold: 0
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
     username: ${DATABASE_APP_USER:legal_ai_app}
@@ -47,6 +52,8 @@ management:
         enabled: true
 
 logging:
+  level:
+    org.apache.pdfbox: ERROR
   pattern:
     correlation: "[%X{traceId:-}] "
 
@@ -69,3 +76,9 @@ integrations:
     oc: ${LAW_OPEN_DATA_OC:}
     connect-timeout: ${LAW_OPEN_DATA_CONNECT_TIMEOUT:2s}
     read-timeout: ${LAW_OPEN_DATA_READ_TIMEOUT:5s}
+
+storage:
+  local:
+    root: ${UPLOAD_TEMP_DIR:./storage/temp-originals}
+    cleanup-enabled: true
+    cleanup-delay-ms: 60000

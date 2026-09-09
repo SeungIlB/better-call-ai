@@ -11,6 +11,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -31,10 +33,16 @@ public class GlobalExceptionHandler {
             BindException.class,
             ConstraintViolationException.class,
             MethodArgumentTypeMismatchException.class,
+            MissingServletRequestPartException.class,
             IllegalArgumentException.class
     })
     ResponseEntity<ErrorResponse> validation() {
         return response(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ResponseEntity<ErrorResponse> uploadTooLarge() {
+        return response(ErrorCode.FILE_TOO_LARGE);
     }
 
     @ExceptionHandler(Exception.class)

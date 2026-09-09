@@ -14,6 +14,12 @@ public enum ErrorCode {
     LOGIN_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_008", "로그인 시도가 제한되었습니다. 15분 후 다시 시도해 주세요."),
     CASE_NOT_FOUND(HttpStatus.NOT_FOUND, "CASE_001", "사건을 찾을 수 없습니다."),
     CASE_VERSION_CONFLICT(HttpStatus.CONFLICT, "CASE_002", "사건이 다른 요청에 의해 변경되었습니다."),
+    FILE_NOT_FOUND(HttpStatus.NOT_FOUND, "FILE_001", "파일을 찾을 수 없습니다."),
+    INVALID_FILE(HttpStatus.BAD_REQUEST, "FILE_002", "파일 이름, 형식 또는 내용을 확인해 주세요."),
+    FILE_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, "FILE_003", "파일 크기 제한을 초과했습니다."),
+    FILE_PAGE_LIMIT(HttpStatus.BAD_REQUEST, "FILE_004", "PDF는 1~30페이지까지 업로드할 수 있습니다."),
+    FILE_CASE_LIMIT(HttpStatus.CONFLICT, "FILE_005", "사건의 파일 개수 또는 용량 제한을 초과했습니다."),
+    FILE_STORAGE_ERROR(HttpStatus.SERVICE_UNAVAILABLE, "FILE_006", "임시 파일 저장소를 사용할 수 없습니다."),
     EXTERNAL_API_ERROR(HttpStatus.BAD_GATEWAY, "LEGAL_DATA_001", "외부 법률 데이터 서비스 호출에 실패했습니다."),
     INTEGRATION_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "COMMON_002", "외부 연동 설정이 필요합니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_999", "일시적인 오류가 발생했습니다.");
