@@ -219,7 +219,7 @@ kr.co.legalai
 - `POST /api/v1/cases/{caseId}/files` — multipart `file` 임시 업로드
 - `GET /api/v1/cases/{caseId}/files/{fileId}` — 자기 파일 메타데이터 조회
 - `GET /api/v1/legal-data/law?query=민법` — 법령 검색
-- `GET /api/v1/legal-data/precedent?query=임대차%20수선의무` — 판례 검색
+- `GET /api/v1/legal-data/precedent?query=임대차%20수선의무` — 판례 본문 검색 (`search=2`). 법령 검색과 판례 단건 본문 조회에는 이 옵션을 적용하지 않습니다. [공식 검색 범위](https://open.law.go.kr/LSO/openApi/guideResult.do?htmlName=precListGuide)
 - `GET /api/v1/legal-data/{type}/{externalId}` — 법령·판례 본문 정규화 조회
 
 ## 다음 구현 순서

@@ -13,12 +13,14 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -55,6 +57,22 @@ class LegalDataServiceTest {
         assertEquals("https://www.law.go.kr/법령/주택임대차보호법", result.items().getFirst().sourceUrl());
         assertTrue(lastQuery.get().contains("target=law"));
         assertTrue(lastQuery.get().contains("OC=test-oc"));
+        assertFalse(lastQuery.get().contains("search="));
+    }
+
+    @Test
+    void precedentSearchUsesBodyScopeAndPreservesEncodedQueryAndPagination() {
+        repository("test-oc").search(LegalDocumentType.PRECEDENT, "누수 & 수선의무", 2, 10);
+
+        var parameters = java.util.Arrays.stream(lastQuery.get().split("&"))
+                .map(pair -> pair.split("=", 2))
+                .collect(java.util.stream.Collectors.toMap(pair -> pair[0],
+                        pair -> URLDecoder.decode(pair[1], StandardCharsets.UTF_8)));
+        assertEquals("prec", parameters.get("target"));
+        assertEquals("2", parameters.get("search"));
+        assertEquals("누수 & 수선의무", parameters.get("query"));
+        assertEquals("2", parameters.get("page"));
+        assertEquals("10", parameters.get("display"));
     }
 
     @Test
@@ -70,6 +88,7 @@ class LegalDataServiceTest {
         assertTrue(result.normalizedText().contains("임대인은 목적물을 사용·수익할 수 있게 할 의무가 있다."));
         assertTrue(lastQuery.get().contains("target=prec"));
         assertTrue(lastQuery.get().contains("ID=7654321"));
+        assertFalse(lastQuery.get().contains("search="));
     }
 
     @Test
