@@ -89,6 +89,22 @@ public class LawOpenDataRepository {
         }
     }
 
+    public JsonNode searchCurrentLaws(String title) {
+        requireConfigured();
+        return readJson(exchange(() -> restClient.get().uri(builder -> builder.path("/lawSearch.do")
+                .queryParam("OC", oc).queryParam("target", "eflaw").queryParam("type", "JSON")
+                .queryParam("nw", 3).queryParam("query", title).queryParam("display", 100).queryParam("page", 1)
+                .build()).retrieve().body(String.class)));
+    }
+
+    public JsonNode findLawVersion(String serial, String effectiveDate) {
+        requireConfigured();
+        return readJson(exchange(() -> restClient.get().uri(builder -> builder.path("/lawService.do")
+                .queryParam("OC", oc).queryParam("target", "eflaw").queryParam("type", "JSON")
+                .queryParam("MST", serial).queryParam("efYd", effectiveDate)
+                .build()).retrieve().body(String.class)));
+    }
+
     private JsonNode readJson(String response) {
         if (response == null || response.isBlank()) {
             throw new ExternalApiException();

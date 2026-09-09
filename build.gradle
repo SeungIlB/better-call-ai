@@ -54,3 +54,17 @@ tasks.named('test') {
 tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-Xlint:deprecation']
 }
+
+// 공개 API가 아닌 로컬 운영 명령. .env를 명령 내부에서 읽으며 비밀값을 인자로 전달하지 않는다.
+tasks.register('importLegalData', JavaExec) {
+    systemProperty 'stdout.encoding', 'UTF-8'
+    systemProperty 'stderr.encoding', 'UTF-8'
+    group = 'application'
+    description = '공식 법령 수집 또는 선별 조문 임베딩 실행'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'kr.co.legalai.legaldata.LegalDataImportCommand'
+}
+
+springBoot {
+    mainClass = 'kr.co.legalai.BetterCallAiApplication'
+}

@@ -70,6 +70,52 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class CaseFlowIntegrationTest {
+    @Test
+    void lawImportIsTransactionalAndEmbeddingsAreIdempotent() {
+        var dataSource = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        var jdbc = new JdbcTemplate(dataSource);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource));
+        var repo = new kr.co.legalai.legaldata.repository.LawImportRepository(jdbc, objectMapper);
+        String externalId = UUID.randomUUID().toString();
+        String hash = kr.co.legalai.legaldata.service.impl.LawArticleParser.hash("테스트 조문");
+        var part = kr.co.legalai.legaldata.entity.CollectedLaw.Part.builder()
+                .heading("테스트 제1조").type("article").content("테스트 조문")
+                .metadata(java.util.Map.of("topic_tags", List.of("housing_lease"), "content_hash", hash)).build();
+        var law = kr.co.legalai.legaldata.entity.CollectedLaw.builder().externalId(externalId).title("테스트 법령")
+                .serial("1").effectiveFrom(java.time.LocalDate.of(2026, 1, 1))
+                .kind(kr.co.legalai.legaldata.entity.LawKind.ACT).sourceUrl("https://www.law.go.kr")
+                .rawJson("{}").contentHash(hash).parts(List.of(part)).build();
+        assertEquals(true, transactions.execute(status -> repo.save(law)));
+        assertEquals(false, transactions.execute(status -> repo.save(law)));
+        UUID chunk = jdbc.queryForObject("""
+                SELECT c.id FROM knowledge.legal_chunks c JOIN knowledge.legal_documents d ON d.id=c.document_id
+                WHERE d.external_id=?
+                """, UUID.class, externalId);
+        var input = new kr.co.legalai.legaldata.repository.LawImportRepository.EmbeddingInput(chunk, part.content(), hash);
+        var vectors = new float[1536]; vectors[0] = 1;
+        String model = kr.co.legalai.legaldata.repository.EmbeddingRepository.MODEL;
+        assertTrue(repo.pendingEmbeddings(model, 100).stream().anyMatch(row -> row.id().equals(chunk)));
+        transactions.executeWithoutResult(status -> repo.saveEmbeddings(model, List.of(input), List.of(vectors)));
+        transactions.executeWithoutResult(status -> repo.saveEmbeddings(model, List.of(input), List.of(vectors)));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM knowledge.chunk_embeddings WHERE chunk_id=?", Integer.class, chunk));
+        assertTrue(repo.pendingEmbeddings(model, 100).stream().noneMatch(row -> row.id().equals(chunk)));
+        assertTrue(repo.search(vectors).stream().anyMatch(row -> row.get("title").equals("테스트 법령")));
+        var broken = kr.co.legalai.legaldata.entity.CollectedLaw.builder().externalId(externalId).title("테스트 법령")
+                .serial("2").effectiveFrom(java.time.LocalDate.of(2026, 2, 1))
+                .kind(kr.co.legalai.legaldata.entity.LawKind.ACT).sourceUrl("https://www.law.go.kr")
+                .rawJson("{}").contentHash(hash).parts(List.of(
+                        kr.co.legalai.legaldata.entity.CollectedLaw.Part.builder().heading("오류")
+                                .type("article").content("오류")
+                                .metadata(java.util.Map.of("topic_tags", List.of(""))).build())).build();
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
+                () -> transactions.execute(status -> repo.save(broken)));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM knowledge.legal_documents WHERE external_id=? AND is_current",
+                Integer.class, externalId));
+        jdbc.update("DELETE FROM knowledge.legal_documents WHERE external_id=?", externalId);
+    }
+
     @MockitoBean
     private kr.co.legalai.chat.repository.OpenAiChatRepository openAiChat;
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean

@@ -7,14 +7,14 @@ spring:
       max-request-size: 21MB
       file-size-threshold: 0
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/legal_ai}
     username: ${DATABASE_APP_USER:legal_ai_app}
     password: ${DATABASE_APP_PASSWORD}
     hikari:
       maximum-pool-size: ${DATABASE_POOL_SIZE:10}
       connection-init-sql: SET TIME ZONE 'UTC'
   auth-datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/legal_ai}
     username: ${DATABASE_AUTH_USER:legal_ai_auth}
     password: ${DATABASE_AUTH_PASSWORD}
     hikari:
@@ -24,7 +24,7 @@ spring:
     enabled: true
     clean-disabled: true
     validate-on-migrate: true
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/legal_ai}
     user: ${DATABASE_MIGRATION_USER:legal_ai_migrator}
     password: ${DATABASE_MIGRATION_PASSWORD}
   security:

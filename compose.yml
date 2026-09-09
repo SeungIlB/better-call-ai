@@ -37,7 +37,7 @@ services:
       DATABASE_APP_PASSWORD: ${DATABASE_APP_PASSWORD:?DATABASE_APP_PASSWORD is required}
       DATABASE_AUTH_PASSWORD: ${DATABASE_AUTH_PASSWORD:?DATABASE_AUTH_PASSWORD is required}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - better-call-ai-postgres:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
