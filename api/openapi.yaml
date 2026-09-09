@@ -24,7 +24,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Case'
+                $ref: '#/components/schemas/CaseSuccess'
         '400':
           $ref: '#/components/responses/BadRequest'
   /api/v1/cases/{caseId}:
@@ -38,8 +38,7 @@ paths:
           description: 사건
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Case'
+              schema: { $ref: '#/components/schemas/CaseSuccess' }
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -56,8 +55,7 @@ paths:
           description: 변경됨
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Case'
+              schema: { $ref: '#/components/schemas/CaseSuccess' }
         '409':
           description: version 충돌
   /api/v1/cases/{caseId}/files:
@@ -122,7 +120,7 @@ paths:
           description: 정규화된 검색 결과
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/LegalSearchResult' }
+              schema: { $ref: '#/components/schemas/LegalSearchSuccess' }
         '502':
           description: 국가법령정보 공동활용 API 호출 또는 응답 처리 실패
         '503':
@@ -142,7 +140,7 @@ paths:
           description: 정규화된 법률 문서
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/LegalDocument' }
+              schema: { $ref: '#/components/schemas/LegalDocumentSuccess' }
         '502':
           description: 국가법령정보 공동활용 API 호출 또는 응답 처리 실패
         '503':
@@ -165,6 +163,11 @@ components:
       required: true
       schema: { type: string, enum: [law, precedent] }
   responses:
+    Unauthorized:
+      description: JWT가 없거나 서명·만료·발급자·대상자 검증에 실패함
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
     BadRequest:
       description: 잘못된 요청
       content:
@@ -203,6 +206,13 @@ components:
         version: { type: integer }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    CaseSuccess:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        data: { $ref: '#/components/schemas/Case' }
+        traceId: { type: [string, 'null'] }
     LegalSearchItem:
       type: object
       required: [externalId, title]
@@ -226,6 +236,13 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/LegalSearchItem' }
+    LegalSearchSuccess:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        data: { $ref: '#/components/schemas/LegalSearchResult' }
+        traceId: { type: [string, 'null'] }
     LegalDocument:
       allOf:
         - $ref: '#/components/schemas/LegalSearchItem'
@@ -234,10 +251,18 @@ components:
           properties:
             type: { type: string, enum: [LAW, PRECEDENT] }
             normalizedText: { type: string }
+    LegalDocumentSuccess:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        data: { $ref: '#/components/schemas/LegalDocument' }
+        traceId: { type: [string, 'null'] }
     ApiError:
       type: object
-      required: [code, message, occurredAt]
+      required: [success, code, message, occurredAt]
       properties:
+        success: { type: boolean, const: false }
         code: { type: string }
         message: { type: string }
         traceId: { type: [string, 'null'] }

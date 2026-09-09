@@ -1,7 +1,7 @@
 package kr.co.legalai.common.exception;
 
-public class CaseNotFoundException extends RuntimeException {
+public class CaseNotFoundException extends BusinessException {
     public CaseNotFoundException() {
-        super("사건을 찾을 수 없습니다.");
+        super(ErrorCode.CASE_NOT_FOUND);
     }
 }

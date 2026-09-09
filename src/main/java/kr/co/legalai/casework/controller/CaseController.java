@@ -5,6 +5,7 @@ import kr.co.legalai.casework.dto.request.CreateCaseRequest;
 import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
 import kr.co.legalai.casework.dto.response.CaseResponse;
 import kr.co.legalai.casework.service.CaseService;
+import kr.co.legalai.common.response.ApiResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -30,23 +31,23 @@ public class CaseController {
     }
 
     @PostMapping
-    public ResponseEntity<CaseResponse> createCase(@Valid @RequestBody CreateCaseRequest request) {
+    public ResponseEntity<ApiResponse<CaseResponse>> createCase(@Valid @RequestBody CreateCaseRequest request) {
         CaseResponse response = caseService.createCase(request);
         return ResponseEntity
                 .created(URI.create("/api/v1/cases/" + response.id()))
-                .body(response);
+                .body(ApiResponse.success(response));
     }
 
     @GetMapping("/{caseId}")
-    public ResponseEntity<CaseResponse> getCase(@PathVariable UUID caseId) {
-        return ResponseEntity.ok(caseService.getCase(caseId));
+    public ApiResponse<CaseResponse> getCase(@PathVariable UUID caseId) {
+        return ApiResponse.success(caseService.getCase(caseId));
     }
 
     @PatchMapping("/{caseId}")
-    public ResponseEntity<CaseResponse> updateCase(
+    public ApiResponse<CaseResponse> updateCase(
             @PathVariable UUID caseId,
             @Valid @RequestBody UpdateCaseRequest request
     ) {
-        return ResponseEntity.ok(caseService.updateCase(caseId, request));
+        return ApiResponse.success(caseService.updateCase(caseId, request));
     }
 }

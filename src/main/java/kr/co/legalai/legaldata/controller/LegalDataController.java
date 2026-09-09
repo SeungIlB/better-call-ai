@@ -8,6 +8,7 @@ import kr.co.legalai.legaldata.dto.response.LegalDocumentResponse;
 import kr.co.legalai.legaldata.dto.response.LegalSearchResponse;
 import kr.co.legalai.legaldata.entity.LegalDocumentType;
 import kr.co.legalai.legaldata.service.LegalDataService;
+import kr.co.legalai.common.response.ApiResponse;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,21 +30,21 @@ public class LegalDataController {
     }
 
     @GetMapping("/{type}")
-    public LegalSearchResponse search(
+    public ApiResponse<LegalSearchResponse> search(
             @PathVariable String type,
             @RequestParam @NotBlank @Size(max = 200) String query,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize
     ) {
-        return service.search(parseType(type), query, page, pageSize);
+        return ApiResponse.success(service.search(parseType(type), query, page, pageSize));
     }
 
     @GetMapping("/{type}/{externalId}")
-    public LegalDocumentResponse getDocument(
+    public ApiResponse<LegalDocumentResponse> getDocument(
             @PathVariable String type,
             @PathVariable @NotBlank @Size(max = 255) String externalId
     ) {
-        return service.getDocument(parseType(type), externalId);
+        return ApiResponse.success(service.getDocument(parseType(type), externalId));
     }
 
     private LegalDocumentType parseType(String type) {

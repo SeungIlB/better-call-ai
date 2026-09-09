@@ -1,7 +1,7 @@
 package kr.co.legalai.common.exception;
 
-public class IntegrationNotConfiguredException extends RuntimeException {
+public class IntegrationNotConfiguredException extends BusinessException {
     public IntegrationNotConfiguredException(String message) {
-        super(message);
+        super(ErrorCode.INTEGRATION_NOT_CONFIGURED);
     }
 }

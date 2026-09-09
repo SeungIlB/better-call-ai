@@ -23,6 +23,9 @@ server:
   shutdown: graceful
   error:
     include-message: never
+    include-binding-errors: never
+    include-exception: false
+    include-stacktrace: never
 
 management:
   endpoints:
@@ -38,7 +41,13 @@ logging:
   pattern:
     correlation: "[%X{traceId:-}] "
 
+security:
+  jwt:
+    audience: ${JWT_AUDIENCE:better-call-ai}
+
 integrations:
   law-open-data:
     base-url: ${LAW_OPEN_DATA_BASE_URL:https://www.law.go.kr/DRF}
     oc: ${LAW_OPEN_DATA_OC:}
+    connect-timeout: ${LAW_OPEN_DATA_CONNECT_TIMEOUT:2s}
+    read-timeout: ${LAW_OPEN_DATA_READ_TIMEOUT:5s}

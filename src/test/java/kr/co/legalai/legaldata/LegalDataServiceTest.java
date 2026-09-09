@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -82,7 +83,13 @@ class LegalDataServiceTest {
     }
 
     private LawOpenDataRepository repository(String oc) {
-        return new LawOpenDataRepository(new ObjectMapper(), baseUrl, oc);
+        return new LawOpenDataRepository(
+                new ObjectMapper(),
+                baseUrl,
+                oc,
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(1)
+        );
     }
 
     private void respond(HttpExchange exchange, String body) throws IOException {

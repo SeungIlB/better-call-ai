@@ -7,11 +7,13 @@
 - PostgreSQL 16 + pgvector 전체 Flyway migration V001~V011
 - migration / auth / application DB role 분리
 - JWT Resource Server 보안 기본값
+- JWT RS256 서명·만료·발급자·audience 검증과 공통 401/403 응답
 - 요청 트랜잭션마다 `app.user_id`를 주입하는 PostgreSQL RLS 경계
 - 사건 생성·조회·진술 수정 vertical slice
 - 법제처 국가법령정보 공동활용 API의 법령·판례 검색 및 본문 정규화
 - 진술 수정 시 optimistic lock, 기존 분석 stale 처리, outbox 발행
 - 공통 오류 응답과 trace ID
+- 공통 성공 응답과 안전한 trace ID 전달
 - OpenAPI 3.1 계약
 - Testcontainers 기반 실제 PostgreSQL 통합 테스트
 
@@ -45,6 +47,7 @@ Invoke-RestMethod http://localhost:8080/actuator/health
 ```
 
 애플리케이션 API는 UUID 형식의 JWT `sub`가 필요합니다. 로컬 인증 공급자 또는 테스트용 JWKS 주소를 `.env`에 설정합니다.
+JWT는 RS256 서명, `exp`/`nbf`, `iss`, `aud`를 모두 검증합니다. `aud`에는 `JWT_AUDIENCE` 값이 포함되어야 하며 사용자 식별에는 요청 본문이나 쿼리의 user ID가 아닌 JWT `sub`만 사용합니다.
 
 법령·판례 검색은 [국가법령정보 공동활용](https://open.law.go.kr/) 승인 후 발급 기준에 맞는 `LAW_OPEN_DATA_OC`를 `.env`에 설정합니다. 값이 없어도 서버와 다른 기능은 기동되며, 법률 데이터 API 호출만 `503 INTEGRATION_NOT_CONFIGURED`를 반환합니다.
 

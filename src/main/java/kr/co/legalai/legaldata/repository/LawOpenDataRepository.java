@@ -8,9 +8,12 @@ import kr.co.legalai.common.exception.IntegrationNotConfiguredException;
 import kr.co.legalai.legaldata.entity.LegalDocumentType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.function.Supplier;
 
 /**
@@ -25,9 +28,19 @@ public class LawOpenDataRepository {
     public LawOpenDataRepository(
             ObjectMapper objectMapper,
             @Value("${integrations.law-open-data.base-url:https://www.law.go.kr/DRF}") String baseUrl,
-            @Value("${integrations.law-open-data.oc:}") String oc
+            @Value("${integrations.law-open-data.oc:}") String oc,
+            @Value("${integrations.law-open-data.connect-timeout:2s}") Duration connectTimeout,
+            @Value("${integrations.law-open-data.read-timeout:5s}") Duration readTimeout
     ) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(connectTimeout)
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(readTimeout);
+        this.restClient = RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
+                .build();
         this.objectMapper = objectMapper;
         this.oc = oc;
     }

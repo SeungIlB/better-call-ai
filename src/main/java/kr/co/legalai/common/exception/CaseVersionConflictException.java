@@ -1,7 +1,7 @@
 package kr.co.legalai.common.exception;
 
-public class CaseVersionConflictException extends RuntimeException {
+public class CaseVersionConflictException extends BusinessException {
     public CaseVersionConflictException() {
-        super("사건이 다른 요청에 의해 변경되었습니다.");
+        super(ErrorCode.CASE_VERSION_CONFLICT);
     }
 }
