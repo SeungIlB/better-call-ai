@@ -21,9 +21,10 @@ public class FileController {
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<FileResponse>> upload(
-            @PathVariable UUID caseId, @RequestPart("file") MultipartFile file
+            @PathVariable UUID caseId, @RequestHeader("Idempotency-Key") UUID idempotencyKey,
+            @RequestPart("file") MultipartFile file
     ) {
-        var response = service.upload(caseId, file);
+        var response = service.upload(caseId, idempotencyKey, file);
         return ResponseEntity.created(URI.create("/api/v1/cases/" + caseId + "/files/" + response.id()))
                 .body(ApiResponse.success(response));
     }

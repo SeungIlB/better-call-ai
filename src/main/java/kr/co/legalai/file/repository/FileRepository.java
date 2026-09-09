@@ -46,6 +46,11 @@ public class FileRepository {
                 (row, index) -> row.getObject(1, UUID.class), caseId).isEmpty();
     }
 
+    public boolean caseExists(UUID caseId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM casework.cases WHERE id = ?)", Boolean.class, caseId));
+    }
+
     public boolean withinCaseLimit(UUID caseId, long addedBytes, UploadPolicy policy) {
         return Boolean.TRUE.equals(jdbc.queryForObject("""
                 SELECT count(*) < ? AND COALESCE(sum(size_bytes), 0) + ? <= ?

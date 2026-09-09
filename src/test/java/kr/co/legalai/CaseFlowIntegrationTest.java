@@ -224,9 +224,9 @@ class CaseFlowIntegrationTest {
                        )
                      """)) {
             result.next();
-            assertEquals(42, result.getInt("table_count"));
+            assertEquals(46, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(48, result.getInt("described_column_count"));
+            assertEquals(65, result.getInt("described_column_count"));
         }
     }
 
@@ -997,13 +997,16 @@ class CaseFlowIntegrationTest {
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isNotFound());
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", bytes))
                         .header("Authorization", "Bearer " + other.accessToken()))
                 .andExpect(status().isNotFound());
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", bytes)))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isBadRequest());
         try (var connection = adminConnection();
@@ -1034,11 +1037,13 @@ class CaseFlowIntegrationTest {
                 new MockMultipartFile("file", "증거.pdf", "application/pdf", testPdf(31)),
                 new MockMultipartFile("file", "증거.pdf", "application/pdf", testPdf(0)),
                 new MockMultipartFile("file", "증거.png", "image/png", new byte[0]))) {
-            mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+            mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString()).file(file)
                             .header("Authorization", "Bearer " + owner.accessToken()))
                     .andExpect(status().isBadRequest());
         }
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", new byte[20 * 1024 * 1024 + 1]))
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().is(413))
@@ -1069,6 +1074,7 @@ class CaseFlowIntegrationTest {
             uploadTestFile(owner, caseId, new MockMultipartFile("file", "증거.png", "image/png", testPng()));
         }
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FILE_005"));
@@ -1089,6 +1095,7 @@ class CaseFlowIntegrationTest {
             assertEquals(5, statement.executeUpdate());
         }
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FILE_005"));
@@ -1160,6 +1167,7 @@ class CaseFlowIntegrationTest {
             org.mockito.Mockito.doThrow(new BusinessException(code))
                     .when(malwareScanner).assertClean(org.mockito.ArgumentMatchers.any(Path.class));
             mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                             .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
                             .header("Authorization", "Bearer " + owner.accessToken()))
                     .andExpect(status().is(code.status().value()))
@@ -1206,6 +1214,231 @@ class CaseFlowIntegrationTest {
         }
     }
 
+    @Test
+    void freeIsLimitedToTenAndPaidHasNoDailyCountOrByteCap() throws Exception {
+        UUID free = tokenUserId(registerTestUser());
+        for (int i = 0; i < 10; i++) {
+            assertEquals("OK", consumeUploadAs(free, 1));
+        }
+        assertEquals("PLAN_LIMIT", consumeUploadAs(free, 1));
+        UUID paid = tokenUserId(registerTestUser());
+        setPaidPlan(paid, false);
+        seedUploadUsage(paid, 299, 299, 0);
+        assertEquals("OK", consumeUploadAs(paid, 1));
+        assertEquals("OK", consumeUploadAs(paid, 1));
+        UUID volumeLimited = tokenUserId(registerTestUser());
+        setPaidPlan(volumeLimited, false);
+        seedUploadUsage(volumeLimited, 1, 1073741823L, 0);
+        assertEquals("OK", consumeUploadAs(volumeLimited, 1));
+        assertEquals("OK", consumeUploadAs(volumeLimited, 20971520));
+    }
+
+    @Test
+    void expiredPaidPlanFallsBackToFreeAndUtcDayResetsUsage() throws Exception {
+        UUID user = tokenUserId(registerTestUser());
+        setPaidPlan(user, true);
+        seedUploadUsage(user, 10, 10, 0);
+        assertEquals("PLAN_LIMIT", consumeUploadAs(user, 1));
+        UUID nextDay = tokenUserId(registerTestUser());
+        seedUploadUsage(nextDay, 300, 1073741824L, -1);
+        assertEquals("OK", consumeUploadAs(nextDay, 1));
+    }
+
+    @Test
+    void concurrentReservationsCannotExceedFreePlan() throws Exception {
+        UUID user = tokenUserId(registerTestUser());
+        seedUploadUsage(user, 9, 9, 0);
+        Callable<String> consume = () -> consumeUploadAs(user, 1);
+        var results = concurrently(List.of(consume, consume, consume, consume));
+        assertEquals(1, results.stream().filter("OK"::equals).count());
+        assertEquals(3, results.stream().filter("PLAN_LIMIT"::equals).count());
+    }
+
+    @Test
+    void applicationCannotUpgradePlanOrReadAnotherUsersUsage() throws Exception {
+        UUID owner = tokenUserId(registerTestUser());
+        UUID other = tokenUserId(registerTestUser());
+        setPaidPlan(other, false);
+        seedUploadUsage(other, 1, 1, 0);
+        try (var connection = appConnection()) {
+            setDatabaseUser(connection, owner);
+            try (var statement = connection.createStatement()) {
+                assertEquals("42501", assertThrows(SQLException.class, () -> statement.executeUpdate(
+                        "INSERT INTO identity.user_plans VALUES ('" + owner + "', 'PAID', now() + interval '1 day')"))
+                        .getSQLState());
+            }
+            connection.rollback();
+            setDatabaseUser(connection, owner);
+            try (var statement = connection.createStatement();
+                 var row = statement.executeQuery("SELECT count(*) FROM identity.user_plans")) {
+                row.next();
+                assertEquals(0, row.getInt(1));
+            }
+            try (var statement = connection.createStatement();
+                 var row = statement.executeQuery("SELECT count(*) FROM casework.daily_upload_usage")) {
+                row.next();
+                assertEquals(0, row.getInt(1));
+            }
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void duplicateUploadReturnsSameFileWithoutRescanOrExtraQuota() throws Exception {
+        var owner = registerTestUser();
+        UUID user = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, user);
+        UUID key = UUID.randomUUID();
+        var file = new MockMultipartFile("file", "증거.png", "image/png", testPng());
+        String first = uploadWithKey(owner, caseId, key, file).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String second = uploadWithKey(owner, caseId, key, file).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(first).path("data").path("id").asString();
+        assertEquals(id, objectMapper.readTree(second).path("data").path("id").asString());
+        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
+                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+        assertEquals(1, outboxCount(UUID.fromString(id)));
+        assertUsageAttempts(user, 1);
+        uploadWithKey(owner, caseId, key, new MockMultipartFile("file", "다른이름.png", "image/png", testPng()))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FILE_010"));
+        UUID otherCase = createHttpCase(owner, user);
+        uploadWithKey(owner, otherCase, key, file).andExpect(status().isConflict());
+        assertUsageAttempts(user, 1);
+    }
+
+    @Test
+    void failedUploadReplayDoesNotRepeatScannerOrRefundSafetyUsage() throws Exception {
+        var owner = registerTestUser();
+        UUID user = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, user);
+        UUID key = UUID.randomUUID();
+        var file = new MockMultipartFile("file", "증거.png", "image/png", testPng());
+        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.MALWARE_SCAN_UNAVAILABLE))
+                .when(malwareScanner).assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+        for (int i = 0; i < 2; i++) {
+            uploadWithKey(owner, caseId, key, file).andExpect(status().isServiceUnavailable());
+        }
+        assertUsageAttempts(user, 1);
+        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
+                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+    }
+
+    @Test
+    void concurrentSameKeyUploadsCreateOnlyOneFile() throws Exception {
+        var owner = registerTestUser();
+        UUID user = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, user);
+        UUID key = UUID.randomUUID();
+        byte[] png = testPng();
+        Callable<Integer> upload = () -> uploadWithKey(owner, caseId, key,
+                new MockMultipartFile("file", "증거.png", "image/png", png))
+                .andReturn().getResponse().getStatus();
+        var results = concurrently(List.of(upload, upload));
+        assertTrue(results.contains(201));
+        assertTrue(results.stream().allMatch(code -> code == 201 || code == 409));
+        uploadWithKey(owner, caseId, key, new MockMultipartFile("file", "증거.png", "image/png", png))
+                .andExpect(status().isCreated());
+        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
+                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+        assertUsageAttempts(user, 1);
+    }
+
+    @Test
+    void uploadHeaderAndFreePlanLimitAreEnforcedButPaidCanContinue() throws Exception {
+        var owner = registerTestUser();
+        UUID user = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, user);
+        var file = new MockMultipartFile("file", "증거.png", "image/png", testPng());
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+                        .header("Idempotency-Key", "invalid")
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isBadRequest());
+        seedUploadUsage(user, 10, 10, 0);
+        uploadWithKey(owner, caseId, UUID.randomUUID(), file)
+                .andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.code").value("FILE_009"));
+        setPaidPlan(user, false);
+        seedUploadUsage(user, 300, 300, 0);
+        uploadWithKey(owner, caseId, UUID.randomUUID(), file)
+                .andExpect(status().isCreated());
+        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
+                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions uploadWithKey(
+            AuthTokenResponse owner, UUID caseId, UUID key, MockMultipartFile file) throws Exception {
+        return mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+                .header("Idempotency-Key", key.toString())
+                .header("Authorization", "Bearer " + owner.accessToken()));
+    }
+
+    private void setPaidPlan(UUID user, boolean expired) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO identity.user_plans VALUES (?, 'PAID', now() + make_interval(days => ?))
+                     ON CONFLICT (user_id) DO UPDATE SET plan_code = 'PAID', expires_at = EXCLUDED.expires_at
+                     """)) {
+            statement.setObject(1, user);
+            statement.setInt(2, expired ? -1 : 1);
+            statement.executeUpdate();
+        }
+    }
+
+    private void seedUploadUsage(UUID user, int attempts, long bytes, int dayOffset) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO casework.daily_upload_usage VALUES (?, (now() AT TIME ZONE 'UTC')::date + ?, ?, ?)
+                     ON CONFLICT (user_id, usage_date) DO UPDATE
+                     SET attempts = EXCLUDED.attempts, size_bytes = EXCLUDED.size_bytes
+                     """)) {
+            statement.setObject(1, user);
+            statement.setInt(2, dayOffset);
+            statement.setInt(3, attempts);
+            statement.setLong(4, bytes);
+            statement.executeUpdate();
+        }
+    }
+
+    private String consumeUploadAs(UUID user, long bytes) throws SQLException {
+        try (var connection = appConnection()) {
+            setDatabaseUser(connection, user);
+            try (var statement = connection.prepareStatement("SELECT casework.consume_daily_upload(?)")) {
+                statement.setLong(1, bytes);
+                try (var row = statement.executeQuery()) {
+                    row.next();
+                    String result = row.getString(1);
+                    connection.commit();
+                    return result;
+                }
+            }
+        }
+    }
+
+    private void setDatabaseUser(Connection connection, UUID user) throws SQLException {
+        connection.setAutoCommit(false);
+        try (var statement = connection.prepareStatement("SELECT set_config('app.user_id', ?, true)")) {
+            statement.setString(1, user.toString());
+            statement.execute();
+        }
+    }
+
+    private void assertUsageAttempts(UUID user, int expected) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT attempts FROM casework.daily_upload_usage
+                     WHERE user_id = ? AND usage_date = (now() AT TIME ZONE 'UTC')::date
+                     """)) {
+            statement.setObject(1, user);
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals(expected, row.getInt(1));
+            }
+        }
+    }
+
     private void makeFilePurgeDue(UUID fileId) throws SQLException {
         try (var connection = adminConnection();
              var statement = connection.prepareStatement("""
@@ -1238,7 +1471,8 @@ class CaseFlowIntegrationTest {
     }
 
     private UUID uploadTestFile(AuthTokenResponse owner, UUID caseId, MockMultipartFile file) throws Exception {
-        String response = mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+        String response = mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString()).file(file)
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.lifecycleStatus").value("UPLOADED"))

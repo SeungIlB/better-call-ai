@@ -209,12 +209,21 @@ paths:
     post:
       operationId: uploadFile
       summary: 내 사건의 원본 파일 임시 업로드
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+          description: 사용자별 요청 UUID. 동일 내용 재시도에 같은 키를 사용한다.
       description: >
         PDF·PNG·JPEG·WebP만 허용하며 확장자, MIME, 헤더와 파싱 결과를 확인한다.
         파일당 20MiB, PDF 30쪽, 사건당 10개·100MiB가 기본 한도다.
         ClamAV 검사 후 형식 파싱을 진행하며 신규 성공 응답의 malwareStatus는 clean이다.
         검사 실패 시 우회하지 않고 업로드 전체를 거부한다.
         원본 다운로드나 OCR 실행을 의미하지 않는다.
+        무료는 UTC 하루 10회이며 유료에는 일일 횟수·총용량 상한이 없다.
+        예약 후 실패도 무료 횟수에 포함된다. 동일 키 재요청은 재검사·추가 차감 없이
+        기존 성공 파일의 현재 메타데이터 또는 저장된 실패 코드를 반환한다.
       requestBody:
         required: true
         content:
@@ -234,11 +243,13 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: 사건 파일 수 또는 합계 용량 초과 (FILE_005)
+          description: 사건 한도 초과 (FILE_005), 동일 키의 내용 불일치 (FILE_010), 동일 요청 처리 중 (FILE_011)
         '413':
           description: 파일 20MiB 또는 multipart 요청 21MiB 초과 (FILE_003)
         '422':
           description: 악성 또는 검사 정책상 안전하지 않은 파일 (FILE_007)
+        '429':
+          description: 무료 플랜 일일 업로드 횟수 초과 (FILE_009)
         '503':
           description: 임시 저장소 사용 불가 (FILE_006) 또는 보안 검사 장애·동시 처리 한도 초과 (FILE_008)
   /api/v1/cases/{caseId}/files/{fileId}:

@@ -5,6 +5,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.UUID;
 
 public interface FileService {
-    FileResponse upload(UUID caseId, MultipartFile file);
+    FileResponse upload(UUID caseId, UUID idempotencyKey, MultipartFile file);
     FileResponse getFile(UUID caseId, UUID fileId);
 }

@@ -34,6 +34,7 @@ public class GlobalExceptionHandler {
             ConstraintViolationException.class,
             MethodArgumentTypeMismatchException.class,
             MissingServletRequestPartException.class,
+            org.springframework.web.bind.MissingRequestHeaderException.class,
             IllegalArgumentException.class
     })
     ResponseEntity<ErrorResponse> validation() {
