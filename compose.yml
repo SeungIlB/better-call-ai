@@ -1,4 +1,33 @@
 services:
+  clamav:
+    image: clamav/clamav:1.4
+    environment:
+      CLAMD_CONF_StreamMaxLength: 20M
+      CLAMD_CONF_MaxFileSize: 20M
+      CLAMD_CONF_MaxScanSize: 100M
+      CLAMD_CONF_MaxRecursion: "10"
+      CLAMD_CONF_MaxFiles: "1000"
+      CLAMD_CONF_MaxScanTime: "8000"
+      CLAMD_CONF_MaxThreads: "2"
+      CLAMD_CONF_MaxQueue: "4"
+      CLAMD_CONF_AlertExceedsMax: "yes"
+      CLAMD_CONF_AlertEncrypted: "yes"
+      CLAMD_CONF_LogClean: "no"
+      CLAMD_CONF_LogVerbose: "no"
+      CLAMD_CONF_LeaveTemporaryFiles: "no"
+      FRESHCLAM_CHECKS: "12"
+    ports:
+      - "127.0.0.1:3310:3310"
+    volumes:
+      - better-call-ai-clamav:/var/lib/clamav
+    tmpfs:
+      - /tmp:size=268435456,noexec,nosuid,nodev
+    mem_limit: 4g
+    cpus: 2
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -19,4 +48,5 @@ services:
       retries: 20
 
 volumes:
+  better-call-ai-clamav:
   better-call-ai-postgres:

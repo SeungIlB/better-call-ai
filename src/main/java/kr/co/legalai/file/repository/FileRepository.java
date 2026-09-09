@@ -63,6 +63,13 @@ public class FileRepository {
                 name, mime, stored.sizeBytes(), stored.id() + ".upload", stored.sha256(), pages, hours);
     }
 
+    public void markClean(UUID fileId) {
+        jdbc.update("""
+                UPDATE casework.files SET malware_status = 'clean', malware_scan_provider = 'clamav',
+                    malware_scanned_at = clock_timestamp() WHERE id = ?
+                """, fileId);
+    }
+
     public Optional<FileResponse> find(UUID caseId, UUID fileId) {
         return jdbc.query("""
                 SELECT id, case_id, original_name, mime_type, size_bytes, page_count, lifecycle_status,

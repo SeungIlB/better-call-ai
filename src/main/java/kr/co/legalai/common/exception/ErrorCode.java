@@ -20,6 +20,8 @@ public enum ErrorCode {
     FILE_PAGE_LIMIT(HttpStatus.BAD_REQUEST, "FILE_004", "PDF는 1~30페이지까지 업로드할 수 있습니다."),
     FILE_CASE_LIMIT(HttpStatus.CONFLICT, "FILE_005", "사건의 파일 개수 또는 용량 제한을 초과했습니다."),
     FILE_STORAGE_ERROR(HttpStatus.SERVICE_UNAVAILABLE, "FILE_006", "임시 파일 저장소를 사용할 수 없습니다."),
+    UNSAFE_FILE(HttpStatus.UNPROCESSABLE_CONTENT, "FILE_007", "안전하지 않은 파일은 업로드할 수 없습니다."),
+    MALWARE_SCAN_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "FILE_008", "파일 보안 검사를 완료할 수 없습니다. 잠시 후 다시 시도해 주세요."),
     EXTERNAL_API_ERROR(HttpStatus.BAD_GATEWAY, "LEGAL_DATA_001", "외부 법률 데이터 서비스 호출에 실패했습니다."),
     INTEGRATION_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "COMMON_002", "외부 연동 설정이 필요합니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_999", "일시적인 오류가 발생했습니다.");

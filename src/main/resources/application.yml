@@ -71,6 +71,10 @@ security:
     lookup-key-base64: ${IDENTITY_LOOKUP_KEY_BASE64:}
 
 integrations:
+  clamav:
+    host: ${CLAMAV_HOST:127.0.0.1}
+    port: ${CLAMAV_PORT:3310}
+    timeout-ms: ${CLAMAV_TIMEOUT_MS:10000}
   law-open-data:
     base-url: ${LAW_OPEN_DATA_BASE_URL:https://www.law.go.kr/DRF}
     oc: ${LAW_OPEN_DATA_OC:}

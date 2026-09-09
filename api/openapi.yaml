@@ -212,7 +212,8 @@ paths:
       description: >
         PDF·PNG·JPEG·WebP만 허용하며 확장자, MIME, 헤더와 파싱 결과를 확인한다.
         파일당 20MiB, PDF 30쪽, 사건당 10개·100MiB가 기본 한도다.
-        악성코드 검사는 아직 연결하지 않아 malwareStatus는 pending이다.
+        ClamAV 검사 후 형식 파싱을 진행하며 신규 성공 응답의 malwareStatus는 clean이다.
+        검사 실패 시 우회하지 않고 업로드 전체를 거부한다.
         원본 다운로드나 OCR 실행을 의미하지 않는다.
       requestBody:
         required: true
@@ -236,8 +237,10 @@ paths:
           description: 사건 파일 수 또는 합계 용량 초과 (FILE_005)
         '413':
           description: 파일 20MiB 또는 multipart 요청 21MiB 초과 (FILE_003)
+        '422':
+          description: 악성 또는 검사 정책상 안전하지 않은 파일 (FILE_007)
         '503':
-          description: 임시 저장소 사용 불가 (FILE_006)
+          description: 임시 저장소 사용 불가 (FILE_006) 또는 보안 검사 장애·동시 처리 한도 초과 (FILE_008)
   /api/v1/cases/{caseId}/files/{fileId}:
     parameters:
       - $ref: '#/components/parameters/CaseId'

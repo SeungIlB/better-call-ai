@@ -31,6 +31,8 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import kr.co.legalai.file.service.FileCleanupService;
 import kr.co.legalai.file.repository.FileCleanupRepository;
+import kr.co.legalai.file.repository.ClamAvRepository;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,6 +70,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class CaseFlowIntegrationTest {
+    @MockitoBean
+    private ClamAvRepository malwareScanner;
     private static final UUID USER_A = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID USER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final KeyPair JWT_KEY_PAIR = generateRsaKeyPair();
@@ -1144,6 +1148,64 @@ class CaseFlowIntegrationTest {
         assertTrue(Files.exists(uploadRoot.resolve(fileId + ".upload")));
     }
 
+    @Test
+    void malwareRejectionAndScannerOutageRollbackOriginalAndDatabase() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        long before;
+        try (var files = Files.list(uploadRoot)) {
+            before = files.count();
+        }
+        for (var code : List.of(ErrorCode.UNSAFE_FILE, ErrorCode.MALWARE_SCAN_UNAVAILABLE)) {
+            org.mockito.Mockito.doThrow(new BusinessException(code))
+                    .when(malwareScanner).assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+            mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                            .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
+                            .header("Authorization", "Bearer " + owner.accessToken()))
+                    .andExpect(status().is(code.status().value()))
+                    .andExpect(jsonPath("$.code").value(code.code()));
+        }
+        try (var files = Files.list(uploadRoot)) {
+            assertEquals(before, files.count());
+        }
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT (SELECT count(*) FROM casework.files WHERE case_id = ?),
+                         (SELECT count(*) FROM ops.outbox_events WHERE event_type = 'FILE_UPLOADED'
+                          AND payload->>'caseId' = ?)
+                     """)) {
+            statement.setObject(1, caseId);
+            statement.setString(2, caseId.toString());
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals(0, row.getInt(1));
+                assertEquals(0, row.getInt(2));
+            }
+        }
+    }
+
+    @Test
+    void successfulScanRecordsProviderAndTimestamp() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID fileId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "증거.png", "image/png", testPng()));
+        org.mockito.Mockito.verify(malwareScanner).assertClean(uploadRoot.resolve(fileId + ".upload"));
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT malware_status, malware_scan_provider, malware_scanned_at
+                     FROM casework.files WHERE id = ?
+                     """)) {
+            statement.setObject(1, fileId);
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals("clean", row.getString(1));
+                assertEquals("clamav", row.getString(2));
+                assertTrue(row.getTimestamp(3) != null);
+            }
+        }
+    }
+
     private void makeFilePurgeDue(UUID fileId) throws SQLException {
         try (var connection = adminConnection();
              var statement = connection.prepareStatement("""
@@ -1180,7 +1242,7 @@ class CaseFlowIntegrationTest {
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.lifecycleStatus").value("UPLOADED"))
-                .andExpect(jsonPath("$.data.malwareStatus").value("pending"))
+                .andExpect(jsonPath("$.data.malwareStatus").value("clean"))
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(objectMapper.readTree(response).path("data").path("id").asString());
     }

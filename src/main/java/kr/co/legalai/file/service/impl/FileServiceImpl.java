@@ -8,6 +8,7 @@ import kr.co.legalai.common.exception.ErrorCode;
 import kr.co.legalai.common.transaction.UserScopedTransaction;
 import kr.co.legalai.file.dto.response.FileResponse;
 import kr.co.legalai.file.repository.FileRepository;
+import kr.co.legalai.file.repository.ClamAvRepository;
 import kr.co.legalai.file.repository.LocalOriginalStorage;
 import kr.co.legalai.file.service.FileService;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,7 @@ public class FileServiceImpl implements FileService {
     private final FileRepository repository;
     private final LocalOriginalStorage storage;
     private final FileValidator validator;
+    private final ClamAvRepository malwareScanner;
 
 
     @Override
@@ -50,11 +52,13 @@ public class FileServiceImpl implements FileService {
                     }
                 }
             });
+            malwareScanner.assertClean(stored.path());
             int pages = validator.validateContent(stored.path(), mime, policy);
             if (!repository.withinCaseLimit(caseId, stored.sizeBytes(), policy)) {
                 throw new BusinessException(ErrorCode.FILE_CASE_LIMIT);
             }
             repository.save(caseId, userId, stored, file.getOriginalFilename(), mime, pages, policy.retentionHours());
+            repository.markClean(fileId);
             repository.recordUploadEvent(caseId, fileId);
             return repository.find(caseId, fileId).orElseThrow(() -> new BusinessException(ErrorCode.FILE_NOT_FOUND));
         });
