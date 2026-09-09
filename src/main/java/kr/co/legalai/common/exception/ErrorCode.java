@@ -27,6 +27,12 @@ public enum ErrorCode {
     MALWARE_SCAN_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "FILE_008", "파일 보안 검사를 완료할 수 없습니다. 잠시 후 다시 시도해 주세요."),
     EXTERNAL_API_ERROR(HttpStatus.BAD_GATEWAY, "LEGAL_DATA_001", "외부 법률 데이터 서비스 호출에 실패했습니다."),
     INTEGRATION_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "COMMON_002", "외부 연동 설정이 필요합니다."),
+    CHAT_KEY_CONFLICT(HttpStatus.CONFLICT, "CHAT_001", "같은 요청 키에 다른 질문을 사용할 수 없습니다."),
+    CHAT_BUSY(HttpStatus.TOO_MANY_REQUESTS, "CHAT_002", "잠시 후 다시 시도해 주세요."),
+    CHAT_GENERATION_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "CHAT_003", "답변을 제공하지 못했습니다. 잠시 후 재시도해 주세요."),
+    CHAT_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_004", "대화를 찾을 수 없습니다."),
+    CHAT_SAVE_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "CHAT_005", "답변 저장을 확인하지 못했습니다. 대화를 다시 조회해 주세요."),
+    CHAT_RETRY_CONFLICT(HttpStatus.CONFLICT, "CHAT_006", "현재 대화를 다시 조회한 후 마지막 질문을 재시도해 주세요."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_999", "일시적인 오류가 발생했습니다.");
 
     private final HttpStatus status;

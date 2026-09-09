@@ -71,6 +71,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class CaseFlowIntegrationTest {
     @MockitoBean
+    private kr.co.legalai.chat.repository.OpenAiChatRepository openAiChat;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+    private kr.co.legalai.chat.repository.ChatRepository chatRepository;
+    @MockitoBean
     private ClamAvRepository malwareScanner;
     private static final UUID USER_A = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID USER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
@@ -224,9 +228,9 @@ class CaseFlowIntegrationTest {
                        )
                      """)) {
             result.next();
-            assertEquals(46, result.getInt("table_count"));
+            assertEquals(47, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(65, result.getInt("described_column_count"));
+            assertEquals(81, result.getInt("described_column_count"));
         }
     }
 
@@ -1599,6 +1603,293 @@ class CaseFlowIntegrationTest {
             assertEquals(64, stored.length());
             assertTrue(!stored.equals(rawToken));
         }
+    }
+
+    @Test
+    void chatCommitsQuestionBeforeGenerationAndReplaysOnlyStoredAnswer() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            // 앱 풀 크기가 1이어도 API 호출 중 DB를 사용할 수 있어야 한다.
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT 1", Integer.class));
+            try (var connection = adminConnection(); var statement = connection.prepareStatement(
+                    "SELECT question, answer, status FROM casework.chat_turns WHERE case_id = ?")) {
+                statement.setObject(1, caseId);
+                try (var rows = statement.executeQuery()) {
+                    assertTrue(rows.next());
+                    assertEquals("누수가 발생했어요", rows.getString(1));
+                    org.junit.jupiter.api.Assertions.assertNull(rows.getString(2));
+                    assertEquals("RUNNING", rows.getString(3));
+                }
+            }
+            return chatAnswer();
+        });
+        sendChat(owner, caseId, key, "누수가 발생했어요")
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.answer").value("언제 발생했나요?"))
+                .andExpect(jsonPath("$.data.status").doesNotExist());
+        sendChat(owner, caseId, key, "누수가 발생했어요").andExpect(status().isOk());
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].retryAllowed").value(false));
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatEnforcesOwnershipForSendListAndRetryAndDatabaseRls() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        stubChat();
+        sendChat(owner, caseId, key, "질문").andExpect(status().isOk());
+        sendChat(other, caseId, UUID.randomUUID(), "질문").andExpect(status().isNotFound());
+        chatHistory(other, caseId).andExpect(status().isNotFound());
+        retryChat(other, caseId, key, 1).andExpect(status().isNotFound());
+        try (var connection = appConnection()) {
+            connection.setAutoCommit(false);
+            try (var statement = connection.createStatement()) {
+                statement.execute("SELECT set_config('app.user_id', '" + tokenUserId(other) + "', true)");
+                try (var rows = statement.executeQuery("SELECT count(*) FROM casework.chat_turns")) {
+                    rows.next();
+                    assertEquals(0, rows.getInt(1));
+                }
+            }
+        }
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatFailureNeedsExplicitIdempotentRetryWithoutDuplicatingQuestion() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList()))
+                .thenThrow(new BusinessException(ErrorCode.CHAT_GENERATION_FAILED)).thenReturn(chatAnswer());
+        sendChat(owner, caseId, key, "질문").andExpect(status().isServiceUnavailable());
+        sendChat(owner, caseId, key, "질문").andExpect(status().isServiceUnavailable());
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items[0].answer").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].retryAllowed").value(true));
+        retryChat(owner, caseId, key, 1).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attempt").value(2));
+        retryChat(owner, caseId, key, 1).andExpect(status().isOk());
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items.length()").value(1));
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(2)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatValidatesKeysInputAndRetryGeneration() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        stubChat();
+        sendChat(owner, caseId, key, "질문").andExpect(status().isOk());
+        sendChat(owner, caseId, key, "다른 질문").andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHAT_001"));
+        sendChat(owner, caseId, UUID.randomUUID(), " ").andExpect(status().isBadRequest());
+        sendChat(owner, caseId, UUID.randomUUID(), "x".repeat(4001)).andExpect(status().isBadRequest());
+        retryChat(owner, caseId, key, 3).andExpect(status().isConflict());
+        retryChat(owner, caseId, key, 0).andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/cases/{id}/chat/turns", caseId)
+                .header("Authorization", "Bearer " + owner.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"content\":\"질문\"}")).andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/cases/{id}/chat/turns", caseId)
+                .header("Authorization", "Bearer " + owner.accessToken()).header("Idempotency-Key", UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"content\":"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void chatConcurrentRequestDoesNotRegenerateOrHoldDatabaseConnection() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID secondCase = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            entered.countDown();
+            assertTrue(release.await(10, TimeUnit.SECONDS));
+            return chatAnswer();
+        });
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var first = executor.submit(() -> sendChat(owner, caseId, key, "질문").andReturn().getResponse().getStatus());
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS));
+                sendChat(owner, caseId, key, "질문").andExpect(status().isTooManyRequests());
+                sendChat(owner, secondCase, UUID.randomUUID(), "질문").andExpect(status().isTooManyRequests());
+                chatHistory(owner, caseId).andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.items[0].answer").doesNotExist())
+                        .andExpect(jsonPath("$.data.items[0].retryAllowed").value(false));
+            } finally { release.countDown(); }
+            assertEquals(200, first.get(10, TimeUnit.SECONDS));
+        }
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatRetriesDatabaseSaveWithoutCallingModelAgain() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        stubChat();
+        org.mockito.Mockito.doThrow(new org.springframework.dao.TransientDataAccessResourceException("비밀 SQL 본문"))
+                .doCallRealMethod().when(chatRepository).complete(org.mockito.ArgumentMatchers.eq(caseId),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+        sendChat(owner, caseId, UUID.randomUUID(), "질문").andExpect(status().isOk());
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+        org.mockito.Mockito.verify(chatRepository, org.mockito.Mockito.times(2)).complete(org.mockito.ArgumentMatchers.eq(caseId),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void chatDoesNotReturnAnswerWhenDatabaseSaveFails() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        stubChat();
+        org.mockito.Mockito.doThrow(new org.springframework.dao.TransientDataAccessResourceException("비밀 SQL 본문"))
+                .when(chatRepository).complete(org.mockito.ArgumentMatchers.eq(caseId), org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+        sendChat(owner, caseId, UUID.randomUUID(), "질문").andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("CHAT_005")).andExpect(jsonPath("$.data").doesNotExist());
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items[0].answer").doesNotExist());
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatRecoversAbandonedAttemptOnlyOnExplicitRetryAndRejectsLateSave() throws Exception {
+        var owner = registerTestUser();
+        UUID userId = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, userId);
+        UUID key = UUID.randomUUID();
+        try (var connection = adminConnection(); var statement = connection.prepareStatement("""
+                INSERT INTO casework.chat_turns(case_id, id, owner_user_id, question, status, started_at)
+                VALUES (?, ?, ?, '질문', 'RUNNING', now() - interval '4 minutes')
+                """)) {
+            statement.setObject(1, caseId); statement.setObject(2, key); statement.setObject(3, userId);
+            statement.executeUpdate();
+        }
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items[0].retryAllowed").value(true));
+        org.mockito.Mockito.verifyNoInteractions(openAiChat);
+        stubChat();
+        retryChat(owner, caseId, key, 1).andExpect(status().isOk()).andExpect(jsonPath("$.data.attempt").value(2));
+        try (var connection = appConnection(); var statement = connection.createStatement()) {
+            connection.setAutoCommit(false);
+            statement.execute("SELECT set_config('app.user_id', '" + userId + "', true)");
+            assertEquals(0, statement.executeUpdate("UPDATE casework.chat_turns SET answer = '늦은 답변' "
+                    + "WHERE id = '" + key + "' AND attempt = 1 AND status = 'RUNNING'"));
+        }
+    }
+
+    @Test
+    void chatHistoryIsBoundedAndOldFailedTurnCannotBeRetriedAfterNewQuestion() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID failedKey = UUID.randomUUID();
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList()))
+                .thenThrow(new BusinessException(ErrorCode.CHAT_GENERATION_FAILED)).thenReturn(chatAnswer());
+        sendChat(owner, caseId, failedKey, "실패한 질문").andExpect(status().isServiceUnavailable());
+        for (int i = 0; i < 7; i++) sendChat(owner, caseId, UUID.randomUUID(), "질문" + i).andExpect(status().isOk());
+        retryChat(owner, caseId, failedKey, 1).andExpect(status().isConflict());
+        org.mockito.ArgumentCaptor<List<kr.co.legalai.chat.entity.ChatInput>> capture = org.mockito.ArgumentCaptor.captor();
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(8)).generate(capture.capture());
+        assertEquals(11, capture.getValue().size()); // 완성된 5턴(10메시지) + 현재 질문
+        mockMvc.perform(get("/api/v1/cases/{id}/chat/turns", caseId).param("pageSize", "2")
+                .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(jsonPath("$.data.items.length()").value(2)).andExpect(jsonPath("$.data.hasNext").value(true));
+    }
+
+    @Test
+    void chatIsHiddenWhenCaseDeletedDuringGeneration() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            try (var connection = adminConnection(); var statement = connection.prepareStatement(
+                    "UPDATE casework.cases SET deleted_at = now(), hard_delete_after = now() + interval '7 days' WHERE id = ?")) {
+                statement.setObject(1, caseId); statement.executeUpdate();
+            }
+            return chatAnswer();
+        });
+        sendChat(owner, caseId, UUID.randomUUID(), "질문").andExpect(status().isNotFound());
+        chatHistory(owner, caseId).andExpect(status().isNotFound());
+        // 삭제된 사건의 내부 RUNNING 행이 새 사건을 영구 차단하지 않는다.
+        stubChat();
+        UUID next = createHttpCase(owner, tokenUserId(owner));
+        sendChat(owner, next, UUID.randomUUID(), "질문").andExpect(status().isOk());
+    }
+
+    @Test
+    void chatInstanceConcurrencyIsSeparateFromUserAndDailyPlanLimits() throws Exception {
+        var firstUser = registerTestUser();
+        var secondUser = registerTestUser();
+        var thirdUser = registerTestUser();
+        UUID firstCase = createHttpCase(firstUser, tokenUserId(firstUser));
+        UUID secondCase = createHttpCase(secondUser, tokenUserId(secondUser));
+        UUID thirdCase = createHttpCase(thirdUser, tokenUserId(thirdUser));
+        var entered = new CountDownLatch(2);
+        var release = new CountDownLatch(1);
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            entered.countDown();
+            assertTrue(release.await(10, TimeUnit.SECONDS));
+            return chatAnswer();
+        });
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> sendChat(firstUser, firstCase, UUID.randomUUID(), "질문")
+                    .andReturn().getResponse().getStatus());
+            var second = executor.submit(() -> sendChat(secondUser, secondCase, UUID.randomUUID(), "질문")
+                    .andReturn().getResponse().getStatus());
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS));
+                sendChat(thirdUser, thirdCase, UUID.randomUUID(), "질문").andExpect(status().isTooManyRequests());
+                chatHistory(thirdUser, thirdCase).andExpect(jsonPath("$.data.items[0].retryAllowed").value(true));
+            } finally { release.countDown(); }
+            assertEquals(200, first.get(10, TimeUnit.SECONDS));
+            assertEquals(200, second.get(10, TimeUnit.SECONDS));
+        }
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(2)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatConfigurationFailureDoesNotBlockStoredRepliesOrSaveNewQuestion() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        stubChat();
+        sendChat(owner, caseId, key, "질문").andExpect(status().isOk());
+        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.INTEGRATION_NOT_CONFIGURED))
+                .when(openAiChat).requireConfigured();
+        sendChat(owner, caseId, UUID.randomUUID(), "새 질문").andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("COMMON_002"));
+        sendChat(owner, caseId, key, "질문").andExpect(status().isOk());
+        chatHistory(owner, caseId).andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(1));
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    private kr.co.legalai.chat.entity.GeneratedAnswer chatAnswer() {
+        return kr.co.legalai.chat.entity.GeneratedAnswer.builder().text("언제 발생했나요?")
+                .model("test-model").responseId("resp_test").inputTokens(12).outputTokens(7).build();
+    }
+
+    private void stubChat() {
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenReturn(chatAnswer());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions sendChat(AuthTokenResponse user, UUID caseId,
+            UUID key, String content) throws Exception {
+        return mockMvc.perform(post("/api/v1/cases/{caseId}/chat/turns", caseId)
+                .header("Authorization", "Bearer " + user.accessToken()).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                        new kr.co.legalai.chat.dto.request.SendChatRequest(content))));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions retryChat(AuthTokenResponse user, UUID caseId,
+            UUID key, int attempt) throws Exception {
+        return mockMvc.perform(post("/api/v1/cases/{caseId}/chat/turns/{id}/retry", caseId, key)
+                .header("Authorization", "Bearer " + user.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"expectedAttempt\":" + attempt + "}"));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions chatHistory(AuthTokenResponse user, UUID caseId) throws Exception {
+        return mockMvc.perform(get("/api/v1/cases/{caseId}/chat/turns", caseId)
+                .header("Authorization", "Bearer " + user.accessToken()));
     }
 
     private static KeyPair generateRsaKeyPair() {

@@ -35,6 +35,7 @@ public class GlobalExceptionHandler {
             MethodArgumentTypeMismatchException.class,
             MissingServletRequestPartException.class,
             org.springframework.web.bind.MissingRequestHeaderException.class,
+            org.springframework.http.converter.HttpMessageNotReadableException.class,
             IllegalArgumentException.class
     })
     ResponseEntity<ErrorResponse> validation() {
