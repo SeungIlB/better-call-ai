@@ -53,7 +53,7 @@ public class LegalDataServiceImpl implements LegalDataService {
         JsonNode response = repository.findDocument(type, externalId.trim());
         String title = firstText(response, titleFields(type));
         if (title == null) {
-            throw new ExternalApiException("국가법령정보 API 본문에서 문서명을 찾지 못했습니다.");
+            throw new ExternalApiException();
         }
         return new LegalDocumentResponse(
                 type,

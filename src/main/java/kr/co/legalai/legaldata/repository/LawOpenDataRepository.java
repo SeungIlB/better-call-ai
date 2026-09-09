@@ -79,20 +79,18 @@ public class LawOpenDataRepository {
 
     private void requireConfigured() {
         if (oc == null || oc.isBlank()) {
-            throw new IntegrationNotConfiguredException(
-                    "국가법령정보 공동활용 API 식별자(LAW_OPEN_DATA_OC)가 설정되지 않았습니다."
-            );
+            throw new IntegrationNotConfiguredException();
         }
     }
 
     private JsonNode readJson(String response) {
         if (response == null || response.isBlank()) {
-            throw new ExternalApiException("국가법령정보 API가 빈 응답을 반환했습니다.");
+            throw new ExternalApiException();
         }
         try {
             return objectMapper.readTree(response);
         } catch (JacksonException exception) {
-            throw new ExternalApiException("국가법령정보 API 응답을 처리하지 못했습니다.", exception);
+            throw new ExternalApiException(exception);
         }
     }
 
@@ -100,7 +98,7 @@ public class LawOpenDataRepository {
         try {
             return request.get();
         } catch (RestClientException exception) {
-            throw new ExternalApiException("국가법령정보 API 호출에 실패했습니다.", exception);
+            throw new ExternalApiException(exception);
         }
     }
 }

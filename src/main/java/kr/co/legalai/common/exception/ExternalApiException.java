@@ -1,11 +1,11 @@
 package kr.co.legalai.common.exception;
 
 public class ExternalApiException extends BusinessException {
-    public ExternalApiException(String message) {
+    public ExternalApiException() {
         super(ErrorCode.EXTERNAL_API_ERROR);
     }
 
-    public ExternalApiException(String message, Throwable cause) {
+    public ExternalApiException(Throwable cause) {
         super(ErrorCode.EXTERNAL_API_ERROR, cause);
     }
 }
