@@ -1,4 +1,6 @@
-package kr.co.legalai.casework.serviceimpl;
+package kr.co.legalai.casework.service.impl;
+
+import lombok.RequiredArgsConstructor;
 
 import kr.co.legalai.casework.dto.request.CreateCaseRequest;
 import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
@@ -21,23 +23,12 @@ import java.util.UUID;
  * 사용자 범위 트랜잭션에서 사건 변경, 분석 무효화, outbox 기록을 조정한다.
  */
 @Service
+@RequiredArgsConstructor
 public class CaseServiceImpl implements CaseService {
     private final UserScopedTransaction transaction;
     private final CaseRepository caseRepository;
     private final AnalysisRepository analysisRepository;
     private final OutboxRepository outboxRepository;
-
-    public CaseServiceImpl(
-            UserScopedTransaction transaction,
-            CaseRepository caseRepository,
-            AnalysisRepository analysisRepository,
-            OutboxRepository outboxRepository
-    ) {
-        this.transaction = transaction;
-        this.caseRepository = caseRepository;
-        this.analysisRepository = analysisRepository;
-        this.outboxRepository = outboxRepository;
-    }
 
     @Override
     public CaseResponse createCase(CreateCaseRequest request) {

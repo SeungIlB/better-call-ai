@@ -95,9 +95,13 @@
 ## Java 및 Spring 구조
 
 - Java 21과 Spring Boot를 사용한다.
+- Lombok을 적극 활용한다. 일반적인 생성자 주입은 final 필드와 `@RequiredArgsConstructor`, 로거는 `@Slf4j`를 사용한다.
+- DTO와 여러 필드를 가진 객체 생성은 `@Builder`로 필드 의미를 명확히 표현한다. 불변 DTO는 record를 유지할 수 있다.
+- 설정값 변환·검증이나 `@Value`, `@Qualifier`가 필요한 생성자는 명시적으로 유지한다. 가변 setter나 `@Data`를 일괄 적용하지 않는다.
 - Kotlin을 추가하지 않는다.
 - 기본 요청 흐름은 `Controller → Service → ServiceImpl → Repository`로 유지한다.
-- 기능 패키지 내부에서 `controller`, `service`, `serviceimpl`, `repository`, `entity`, `dto`를 사용한다.
+- 기능 패키지 내부에서 `controller`, `service`, `repository`, `entity`, `dto`를 사용한다. 서비스 구현 클래스는 `service/impl`에 둔다.
+- 별도의 `api`, `application`, `domain`, `persistence` 계층 패키지나 빈 디렉터리를 만들지 않는다. 루트 `api/openapi.yaml`은 API 계약 문서이므로 유지한다.
 - Controller는 HTTP 요청·응답과 검증만 담당한다.
 - Service 인터페이스는 기능 계약을 정의하고 ServiceImpl이 업무 흐름과 트랜잭션을 조정한다.
 - Repository는 PostgreSQL 또는 외부 API 접근을 담당한다.

@@ -5,7 +5,7 @@ import com.sun.net.httpserver.HttpServer;
 import kr.co.legalai.common.exception.IntegrationNotConfiguredException;
 import kr.co.legalai.legaldata.entity.LegalDocumentType;
 import kr.co.legalai.legaldata.repository.LawOpenDataRepository;
-import kr.co.legalai.legaldata.serviceimpl.LegalDataServiceImpl;
+import kr.co.legalai.legaldata.service.impl.LegalDataServiceImpl;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

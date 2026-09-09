@@ -1,4 +1,4 @@
-package kr.co.legalai.auth.serviceimpl;
+package kr.co.legalai.auth.service.impl;
 
 import kr.co.legalai.auth.dto.request.LoginRequest;
 import kr.co.legalai.auth.dto.request.RegisterRequest;

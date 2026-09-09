@@ -1,4 +1,6 @@
-package kr.co.legalai.legaldata.serviceimpl;
+package kr.co.legalai.legaldata.service.impl;
+
+import lombok.RequiredArgsConstructor;
 
 import tools.jackson.databind.JsonNode;
 import kr.co.legalai.common.exception.ExternalApiException;
@@ -22,16 +24,13 @@ import java.util.stream.StreamSupport;
  * 법제처 응답의 한글 필드와 문서별 구조 차이를 내부 응답 모델로 정규화한다.
  */
 @Service
+@RequiredArgsConstructor
 public class LegalDataServiceImpl implements LegalDataService {
     private static final String LAW_HOST = "https://www.law.go.kr";
     private static final DateTimeFormatter BASIC_DATE = DateTimeFormatter.BASIC_ISO_DATE;
     private static final Pattern SEPARATED_DATE = Pattern.compile("(\\d{4})\\D+(\\d{1,2})\\D+(\\d{1,2})");
 
     private final LawOpenDataRepository repository;
-
-    public LegalDataServiceImpl(LawOpenDataRepository repository) {
-        this.repository = repository;
-    }
 
     @Override
     public LegalSearchResponse search(LegalDocumentType type, String query, int page, int pageSize) {
