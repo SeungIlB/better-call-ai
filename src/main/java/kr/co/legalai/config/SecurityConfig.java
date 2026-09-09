@@ -1,5 +1,6 @@
 package kr.co.legalai.config;
 
+import kr.co.legalai.auth.security.JwtKeyProvider;
 import kr.co.legalai.common.security.ApiAccessDeniedHandler;
 import kr.co.legalai.common.security.ApiAuthenticationEntryPoint;
 import kr.co.legalai.common.security.JwtAudienceValidator;
@@ -14,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -31,7 +33,13 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
+                        .requestMatchers(
+                                "/actuator/health/**",
+                                "/.well-known/jwks.json",
+                                "/api/v1/auth/register",
+                                "/api/v1/auth/login",
+                                "/api/v1/auth/refresh"
+                        ).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(authenticationEntryPoint)
@@ -45,16 +53,17 @@ public class SecurityConfig {
 
     @Bean
     JwtDecoder jwtDecoder(
-            @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}") String jwkSetUri,
+            JwtKeyProvider keyProvider,
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuer,
             @Value("${security.jwt.audience}") String audience
-    ) {
-        NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
-                .jwsAlgorithm(SignatureAlgorithm.RS256)
-                .build();
+    ) throws Exception {
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withPublicKey(
+                keyProvider.getSigningKey().toRSAPublicKey()
+        ).signatureAlgorithm(SignatureAlgorithm.RS256).build();
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 JwtValidators.createDefaultWithIssuer(issuer),
-                new JwtAudienceValidator(audience)
+                new JwtAudienceValidator(audience),
+                new JwtClaimValidator<>("token_type", "access"::equals)
         ));
         return decoder;
     }

@@ -1,34 +1,55 @@
 package kr.co.legalai;
 
+import com.nimbusds.jose.crypto.RSASSAVerifier;
+import com.nimbusds.jwt.SignedJWT;
+import kr.co.legalai.auth.dto.request.LoginRequest;
+import kr.co.legalai.auth.dto.request.RegisterRequest;
+import kr.co.legalai.auth.service.AuthService;
 import kr.co.legalai.casework.dto.request.CreateCaseRequest;
 import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
 import kr.co.legalai.casework.service.CaseService;
 import kr.co.legalai.common.exception.CaseNotFoundException;
+import kr.co.legalai.common.exception.BusinessException;
+import kr.co.legalai.common.exception.ErrorCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.interfaces.RSAPublicKey;
+import java.util.Base64;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
+@AutoConfigureMockMvc
 class CaseFlowIntegrationTest {
     private static final UUID USER_A = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID USER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final KeyPair JWT_KEY_PAIR = generateRsaKeyPair();
+    private static final String TEST_SECRET = Base64.getEncoder().encodeToString(new byte[32]);
 
     private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(
             DockerImageName.parse("pgvector/pgvector:pg16")
@@ -60,16 +81,32 @@ class CaseFlowIntegrationTest {
     @Autowired
     private CaseService service;
 
+    @Autowired
+    private AuthService authService;
+
+    @Autowired
+    private MockMvc mockMvc;
+
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", () -> "legal_ai_app");
         registry.add("spring.datasource.password", () -> "app_test");
+        registry.add("spring.auth-datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.auth-datasource.username", () -> "legal_ai_auth");
+        registry.add("spring.auth-datasource.password", () -> "auth_test");
         registry.add("spring.flyway.url", POSTGRES::getJdbcUrl);
         registry.add("spring.flyway.user", POSTGRES::getUsername);
         registry.add("spring.flyway.password", POSTGRES::getPassword);
         registry.add("spring.security.oauth2.resourceserver.jwt.issuer-uri", () -> "http://issuer.test");
-        registry.add("spring.security.oauth2.resourceserver.jwt.jwk-set-uri", () -> "http://issuer.test/jwks");
+        registry.add("security.jwt.private-key-base64", () -> Base64.getEncoder().encodeToString(
+                JWT_KEY_PAIR.getPrivate().getEncoded()
+        ));
+        registry.add("security.jwt.public-key-base64", () -> Base64.getEncoder().encodeToString(
+                JWT_KEY_PAIR.getPublic().getEncoded()
+        ));
+        registry.add("security.identity.encryption-key-base64", () -> TEST_SECRET);
+        registry.add("security.identity.lookup-key-base64", () -> TEST_SECRET);
     }
 
     @BeforeEach
@@ -265,6 +302,111 @@ class CaseFlowIntegrationTest {
         }
     }
 
+    @Test
+    void registerLoginAndMeUseProtectedIdentityData() throws Exception {
+        String email = "User-" + UUID.randomUUID() + "@Example.com";
+        var registered = authService.register(new RegisterRequest(
+                email,
+                "secure-password-123",
+                "임차인",
+                true,
+                true
+        ));
+
+        SignedJWT accessToken = SignedJWT.parse(registered.accessToken());
+        assertTrue(accessToken.verify(new RSASSAVerifier((RSAPublicKey) JWT_KEY_PAIR.getPublic())));
+        assertEquals("http://issuer.test", accessToken.getJWTClaimsSet().getIssuer());
+        assertEquals("better-call-ai", accessToken.getJWTClaimsSet().getAudience().getFirst());
+
+        UUID userId = UUID.fromString(accessToken.getJWTClaimsSet().getSubject());
+        authenticate(userId);
+        var me = authService.getMe();
+        assertEquals(email.toLowerCase(), me.email());
+        assertEquals("임차인", me.displayName());
+
+        var loggedIn = authService.login(new LoginRequest(email.toUpperCase(), "secure-password-123"));
+        assertTrue(loggedIn.accessTokenExpiresAt().isBefore(loggedIn.refreshTokenExpiresAt()));
+        assertRefreshTokenIsHashed(registered.refreshToken());
+    }
+
+    @Test
+    void duplicateEmailAndWrongPasswordAreRejected() {
+        String email = "duplicate-" + UUID.randomUUID() + "@example.com";
+        var request = new RegisterRequest(email, "secure-password-123", "사용자", true, true);
+        authService.register(request);
+
+        BusinessException duplicate = assertThrows(BusinessException.class, () -> authService.register(request));
+        assertEquals(ErrorCode.EMAIL_ALREADY_REGISTERED, duplicate.getErrorCode());
+
+        BusinessException wrongPassword = assertThrows(BusinessException.class, () ->
+                authService.login(new LoginRequest(email, "wrong-password"))
+        );
+        assertEquals(ErrorCode.INVALID_CREDENTIALS, wrongPassword.getErrorCode());
+    }
+
+    @Test
+    void refreshTokenRotatesAndReuseRevokesTheReplacement() {
+        String email = "rotation-" + UUID.randomUUID() + "@example.com";
+        var registered = authService.register(new RegisterRequest(
+                email,
+                "secure-password-123",
+                "사용자",
+                true,
+                true
+        ));
+        var rotated = authService.refresh(registered.refreshToken());
+
+        BusinessException reused = assertThrows(BusinessException.class, () ->
+                authService.refresh(registered.refreshToken())
+        );
+        assertEquals(ErrorCode.REFRESH_TOKEN_REUSED, reused.getErrorCode());
+
+        BusinessException replacementRevoked = assertThrows(BusinessException.class, () ->
+                authService.refresh(rotated.refreshToken())
+        );
+        assertEquals(ErrorCode.INVALID_REFRESH_TOKEN, replacementRevoked.getErrorCode());
+    }
+
+    @Test
+    void registrationIsPublicButMeRequiresAuthentication() throws Exception {
+        String email = "http-" + UUID.randomUUID() + "@example.com";
+        mockMvc.perform(post("/api/v1/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "email": "%s",
+                                  "password": "secure-password-123",
+                                  "displayName": "사용자",
+                                  "termsAccepted": true,
+                                  "privacyAccepted": true
+                                }
+                                """.formatted(email)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.tokenType").value("Bearer"));
+
+        mockMvc.perform(get("/api/v1/auth/me"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_001"));
+
+        mockMvc.perform(get("/.well-known/jwks.json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.keys[0].kty").value("RSA"))
+                .andExpect(jsonPath("$.keys[0].d").doesNotExist());
+
+        var tokenPair = authService.register(new RegisterRequest(
+                "bearer-" + UUID.randomUUID() + "@example.com",
+                "secure-password-123",
+                "인증 사용자",
+                true,
+                true
+        ));
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + tokenPair.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.displayName").value("인증 사용자"));
+    }
+
     private void authenticate(UUID userId) {
         SecurityContextHolder.getContext().setAuthentication(
                 new TestingAuthenticationToken(userId.toString(), null)
@@ -298,5 +440,29 @@ class CaseFlowIntegrationTest {
                 "legal_ai_app",
                 "app_test"
         );
+    }
+
+    private void assertRefreshTokenIsHashed(String rawToken) throws SQLException {
+        try (Connection connection = adminConnection();
+             var statement = connection.createStatement();
+             var result = statement.executeQuery("""
+                     SELECT token_hash FROM identity.refresh_tokens
+                     ORDER BY created_at DESC LIMIT 1
+                     """)) {
+            result.next();
+            String stored = result.getString(1);
+            assertEquals(64, stored.length());
+            assertTrue(!stored.equals(rawToken));
+        }
+    }
+
+    private static KeyPair generateRsaKeyPair() {
+        try {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+            generator.initialize(2048);
+            return generator.generateKeyPair();
+        } catch (Exception exception) {
+            throw new ExceptionInInitializerError(exception);
+        }
     }
 }

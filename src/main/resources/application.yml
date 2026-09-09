@@ -8,6 +8,13 @@ spring:
     hikari:
       maximum-pool-size: ${DATABASE_POOL_SIZE:10}
       connection-init-sql: SET TIME ZONE 'UTC'
+  auth-datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
+    username: ${DATABASE_AUTH_USER:legal_ai_auth}
+    password: ${DATABASE_AUTH_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DATABASE_AUTH_POOL_SIZE:5}
+      connection-init-sql: SET TIME ZONE 'UTC'
   flyway:
     enabled: true
     clean-disabled: true
@@ -19,8 +26,7 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${JWT_JWK_SET_URI:http://localhost:8081/.well-known/jwks.json}
-          issuer-uri: ${JWT_ISSUER:http://localhost:8081}
+          issuer-uri: ${JWT_ISSUER:http://localhost:8080}
 
 server:
   shutdown: graceful
@@ -34,7 +40,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health
   endpoint:
     health:
       probes:
@@ -47,6 +53,15 @@ logging:
 security:
   jwt:
     audience: ${JWT_AUDIENCE:better-call-ai}
+    key-id: ${JWT_KEY_ID:better-call-ai-local}
+    private-key-base64: ${JWT_PRIVATE_KEY_BASE64:}
+    public-key-base64: ${JWT_PUBLIC_KEY_BASE64:}
+    access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:15m}
+    refresh-token-ttl: ${JWT_REFRESH_TOKEN_TTL:14d}
+  identity:
+    encryption-key-id: ${IDENTITY_ENCRYPTION_KEY_ID:local-v1}
+    encryption-key-base64: ${IDENTITY_ENCRYPTION_KEY_BASE64:}
+    lookup-key-base64: ${IDENTITY_LOOKUP_KEY_BASE64:}
 
 integrations:
   law-open-data:

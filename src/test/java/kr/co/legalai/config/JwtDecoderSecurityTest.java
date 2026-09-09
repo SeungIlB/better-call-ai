@@ -3,25 +3,20 @@ package kr.co.legalai.config;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.crypto.RSASSASigner;
-import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
+import kr.co.legalai.auth.security.JwtKeyProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.Date;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -32,26 +27,22 @@ class JwtDecoderSecurityTest {
     private static final String AUDIENCE = "better-call-ai";
     private static final String KEY_ID = "test-key";
 
-    private HttpServer server;
     private RSAKey signingKey;
     private JwtDecoder decoder;
 
     @BeforeEach
     void setUp() throws Exception {
         signingKey = generateKey(KEY_ID);
-        server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/jwks", this::respondWithJwks);
-        server.start();
+        var keyProvider = new JwtKeyProvider(
+                KEY_ID,
+                Base64.getEncoder().encodeToString(signingKey.toRSAPrivateKey().getEncoded()),
+                Base64.getEncoder().encodeToString(signingKey.toRSAPublicKey().getEncoded())
+        );
         decoder = new SecurityConfig().jwtDecoder(
-                "http://localhost:" + server.getAddress().getPort() + "/jwks",
+                keyProvider,
                 ISSUER,
                 AUDIENCE
         );
-    }
-
-    @AfterEach
-    void tearDown() {
-        server.stop(0);
     }
 
     @Test
@@ -90,19 +81,38 @@ class JwtDecoderSecurityTest {
         assertThrows(JwtException.class, () -> decoder.decode(token));
     }
 
+    @Test
+    void rejectsTokenWithoutAccessType() throws Exception {
+        String token = token(signingKey, ISSUER, AUDIENCE, Instant.now().plusSeconds(300), false);
+
+        assertThrows(JwtException.class, () -> decoder.decode(token));
+    }
+
     private String token(RSAKey key, String issuer, String audience, Instant expiresAt) throws Exception {
+        return token(key, issuer, audience, expiresAt, true);
+    }
+
+    private String token(
+            RSAKey key,
+            String issuer,
+            String audience,
+            Instant expiresAt,
+            boolean accessToken
+    ) throws Exception {
         Instant now = Instant.now();
-        var claims = new JWTClaimsSet.Builder()
+        var claimsBuilder = new JWTClaimsSet.Builder()
                 .subject("11111111-1111-1111-1111-111111111111")
                 .issuer(issuer)
                 .audience(audience)
                 .issueTime(Date.from(now.minusSeconds(1)))
                 .notBeforeTime(Date.from(now.minusSeconds(1)))
-                .expirationTime(Date.from(expiresAt))
-                .build();
+                .expirationTime(Date.from(expiresAt));
+        if (accessToken) {
+            claimsBuilder.claim("token_type", "access");
+        }
         var jwt = new SignedJWT(
                 new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(KEY_ID).build(),
-                claims
+                claimsBuilder.build()
         );
         jwt.sign(new RSASSASigner(key.toRSAPrivateKey()));
         return jwt.serialize();
@@ -118,13 +128,4 @@ class JwtDecoderSecurityTest {
                 .build();
     }
 
-    private void respondWithJwks(HttpExchange exchange) throws IOException {
-        byte[] response = new JWKSet(signingKey.toPublicJWK())
-                .toString()
-                .getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(200, response.length);
-        exchange.getResponseBody().write(response);
-        exchange.close();
-    }
 }
