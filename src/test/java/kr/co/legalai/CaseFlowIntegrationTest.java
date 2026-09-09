@@ -20,11 +20,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -47,6 +49,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -95,6 +98,12 @@ class CaseFlowIntegrationTest {
     private MockMvc mockMvc;
 
     @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
     private IdentityCrypto identityCrypto;
 
     @DynamicPropertySource
@@ -102,6 +111,8 @@ class CaseFlowIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", () -> "legal_ai_app");
         registry.add("spring.datasource.password", () -> "app_test");
+        // 동일 연결을 재사용해 사용자 범위가 다음 요청으로 새지 않는지도 검증한다.
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "1");
         registry.add("spring.auth-datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.auth-datasource.username", () -> "legal_ai_auth");
         registry.add("spring.auth-datasource.password", () -> "auth_test");
@@ -421,6 +432,138 @@ class CaseFlowIntegrationTest {
         SecurityContextHolder.getContext().setAuthentication(
                 new TestingAuthenticationToken(userId.toString(), null)
         );
+    }
+
+    @Test
+    void httpCaseOwnershipRejectsForeignReadsAndWritesWithoutChangingData() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID ownerId = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, tokenUserId(other));
+        assertEquals(ownerId, storedCaseOwner(caseId));
+        String originalSnapshot = caseSnapshot(caseId);
+        int originalOutboxCount = outboxCount(caseId);
+
+        // 존재하는 타인 사건과 없는 사건 모두 같은 공개 오류로 응답한다.
+        for (UUID target : List.of(caseId, UUID.randomUUID())) {
+            mockMvc.perform(get("/api/v1/cases/{caseId}", target)
+                            .header("Authorization", "Bearer " + other.accessToken())
+                            .header("X-User-Id", ownerId.toString())
+                            .param("userId", ownerId.toString()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.code").value("CASE_001"))
+                    .andExpect(jsonPath("$.message").value(ErrorCode.CASE_NOT_FOUND.message()))
+                    .andExpect(jsonPath("$.data").doesNotExist());
+
+            // 버전을 맞히거나 틀려도 타인은 409 대신 404를 받는다.
+            for (int version : List.of(1, 99)) {
+                mockMvc.perform(patch("/api/v1/cases/{caseId}", target)
+                                .header("Authorization", "Bearer " + other.accessToken())
+                                .header("X-User-Id", ownerId.toString())
+                                .param("userId", ownerId.toString())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"originalStatement":"타인의 변경 시도","expectedVersion":%d,
+                                         "userId":"%s","ownerUserId":"%s"}
+                                        """.formatted(version, ownerId, ownerId)))
+                        .andExpect(status().isNotFound())
+                        .andExpect(jsonPath("$.code").value("CASE_001"))
+                        .andExpect(jsonPath("$.message").value(ErrorCode.CASE_NOT_FOUND.message()));
+            }
+        }
+        assertEquals(originalSnapshot, caseSnapshot(caseId));
+        assertEquals(originalOutboxCount, outboxCount(caseId));
+
+        // 차단된 트랜잭션 뒤 같은 연결을 재사용해도 본인 요청은 정상 처리된다.
+        mockMvc.perform(get("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.originalStatement").value("계약서 누수 분쟁"));
+        mockMvc.perform(patch("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"originalStatement\":\"소유자의 변경\",\"expectedVersion\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.version").value(2));
+        assertEquals(originalOutboxCount + 1, outboxCount(caseId));
+        String updatedSnapshot = caseSnapshot(caseId);
+        mockMvc.perform(patch("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"originalStatement\":\"오래된 버전 변경\",\"expectedVersion\":1}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CASE_002"));
+        assertEquals(updatedSnapshot, caseSnapshot(caseId));
+        assertEquals(originalOutboxCount + 1, outboxCount(caseId));
+    }
+
+    @Test
+    void httpCaseCreationUsesJwtSubjectAndUnauthenticatedRequestsAreRejected() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID caseId = createHttpCase(other, tokenUserId(owner));
+        assertEquals(tokenUserId(other), storedCaseOwner(caseId));
+        String snapshot = caseSnapshot(caseId);
+        mockMvc.perform(get("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + other.accessToken()))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/cases/{caseId}", caseId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_001"));
+        mockMvc.perform(patch("/api/v1/cases/{caseId}", caseId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"originalStatement\":\"익명 변경\",\"expectedVersion\":1}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/v1/cases")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"익명 생성\"}"))
+                .andExpect(status().isUnauthorized());
+        assertEquals(snapshot, caseSnapshot(caseId));
+        assertEquals(1, outboxCount(caseId));
+        // 요청이 끝난 연결에는 직전 사용자의 읽기 권한이 남지 않는다.
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM casework.cases", Integer.class));
+    }
+
+    private UUID createHttpCase(AuthTokenResponse token, UUID claimedOwner) throws Exception {
+        var response = mockMvc.perform(post("/api/v1/cases")
+                        .header("Authorization", "Bearer " + token.accessToken())
+                        .header("X-User-Id", claimedOwner.toString())
+                        .param("userId", claimedOwner.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"소유권 검증 사건","originalStatement":"계약서 누수 분쟁",
+                                 "userId":"%s","ownerUserId":"%s"}
+                                """.formatted(claimedOwner, claimedOwner)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.version").value(1))
+                .andReturn().getResponse();
+        return UUID.fromString(objectMapper.readTree(response.getContentAsString()).path("data").path("id").asString());
+    }
+
+    private UUID storedCaseOwner(UUID caseId) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("SELECT owner_user_id FROM casework.cases WHERE id = ?")) {
+            statement.setObject(1, caseId);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                return result.getObject(1, UUID.class);
+            }
+        }
+    }
+
+    private String caseSnapshot(UUID caseId) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("SELECT to_jsonb(c)::text FROM casework.cases c WHERE id = ?")) {
+            statement.setObject(1, caseId);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                return result.getString(1);
+            }
+        }
     }
 
     @Test

@@ -142,9 +142,14 @@ paths:
               schema: { $ref: '#/components/schemas/CaseSuccess' }
         '404':
           $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     patch:
       operationId: updateCase
       summary: 사건 진술 수정 및 기존 분석 stale 처리
+      description: >
+        소유자는 JWT sub로만 식별한다. 입력 검증을 통과한 요청에서 타인 소유 또는 없는 사건은 기대 버전 일치 여부와 관계없이 404를 반환한다.
+        소유자 요청에서만 오래된 버전을 409로 구분하며 거부된 요청은 사건과 outbox를 변경하지 않는다.
       requestBody:
         required: true
         content:
@@ -159,6 +164,10 @@ paths:
               schema: { $ref: '#/components/schemas/CaseSuccess' }
         '409':
           description: version 충돌
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/v1/cases/{caseId}/files:
     parameters:
       - $ref: '#/components/parameters/CaseId'
