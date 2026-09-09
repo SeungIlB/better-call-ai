@@ -4,6 +4,8 @@ import com.nimbusds.jose.crypto.RSASSAVerifier;
 import com.nimbusds.jwt.SignedJWT;
 import kr.co.legalai.auth.dto.request.LoginRequest;
 import kr.co.legalai.auth.dto.request.RegisterRequest;
+import kr.co.legalai.auth.dto.response.AuthTokenResponse;
+import kr.co.legalai.auth.security.IdentityCrypto;
 import kr.co.legalai.auth.service.AuthService;
 import kr.co.legalai.casework.dto.request.CreateCaseRequest;
 import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
@@ -34,6 +36,11 @@ import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPublicKey;
 import java.util.Base64;
 import java.util.UUID;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -86,6 +93,9 @@ class CaseFlowIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private IdentityCrypto identityCrypto;
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -177,9 +187,9 @@ class CaseFlowIntegrationTest {
                        )
                      """)) {
             result.next();
-            assertEquals(41, result.getInt("table_count"));
+            assertEquals(42, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(43, result.getInt("described_column_count"));
+            assertEquals(47, result.getInt("described_column_count"));
         }
     }
 
@@ -411,6 +421,218 @@ class CaseFlowIntegrationTest {
         SecurityContextHolder.getContext().setAuthentication(
                 new TestingAuthenticationToken(userId.toString(), null)
         );
+    }
+
+    @Test
+    void logoutIsIdempotentAndCannotRevokeAnotherUsersToken() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        mockMvc.perform(post("/api/v1/auth/logout")
+                        .header("Authorization", "Bearer " + other.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"" + owner.refreshToken() + "\"}"))
+                .andExpect(status().isNoContent());
+        var rotated = authService.refresh(owner.refreshToken());
+        for (int i = 0; i < 2; i++) {
+            mockMvc.perform(post("/api/v1/auth/logout")
+                            .header("Authorization", "Bearer " + owner.accessToken())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"refreshToken\":\"" + rotated.refreshToken() + "\"}"))
+                    .andExpect(status().isNoContent());
+        }
+        assertAuthError(ErrorCode.INVALID_REFRESH_TOKEN, () -> authService.refresh(rotated.refreshToken()));
+        // Stateless Access Token은 로그아웃 후에도 만료 전까지 유효하다.
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isOk());
+        assertTrue(authService.refresh(other.refreshToken()).accessToken() != null);
+    }
+
+    @Test
+    void expiredRefreshTokenIsRejectedAndRevocationIsCommitted() throws Exception {
+        var pair = registerTestUser();
+        UUID userId = tokenUserId(pair);
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     UPDATE identity.refresh_tokens
+                     SET created_at = now() - interval '2 days', expires_at = now() - interval '1 day'
+                     WHERE user_id = ?
+                     """)) {
+            statement.setObject(1, userId);
+            assertEquals(1, statement.executeUpdate());
+        }
+        assertAuthError(ErrorCode.INVALID_REFRESH_TOKEN, () -> authService.refresh(pair.refreshToken()));
+        assertEquals(0, activeRefreshCount(userId));
+    }
+
+    @Test
+    void concurrentRefreshAllowsOneRotationAndRevokesWinnerOnReuse() throws Exception {
+        var pair = registerTestUser();
+        var outcomes = concurrently(List.of(
+                () -> refreshOutcome(pair.refreshToken()),
+                () -> refreshOutcome(pair.refreshToken())
+        ));
+        assertEquals(1, outcomes.stream().filter(AuthTokenResponse.class::isInstance).count());
+        assertEquals(1, outcomes.stream().filter(ErrorCode.REFRESH_TOKEN_REUSED::equals).count());
+        assertEquals(0, activeRefreshCount(tokenUserId(pair)));
+    }
+
+    @Test
+    void parallelReplaysAcrossSessionsDoNotDeadlockOrLeaveActiveTokens() throws Exception {
+        String email = "sessions-" + UUID.randomUUID() + "@example.com";
+        var first = authService.register(new RegisterRequest(email, "secure-password-123", "사용자", true, true));
+        var second = authService.login(new LoginRequest(email, "secure-password-123"));
+        authService.refresh(first.refreshToken());
+        authService.refresh(second.refreshToken());
+        var outcomes = concurrently(List.of(
+                () -> refreshOutcome(first.refreshToken()),
+                () -> refreshOutcome(second.refreshToken())
+        ));
+        assertTrue(outcomes.stream().allMatch(ErrorCode.REFRESH_TOKEN_REUSED::equals));
+        assertEquals(0, activeRefreshCount(tokenUserId(first)));
+    }
+
+    @Test
+    void suspendedAccountCannotRefreshAndRevokesAllSessions() throws Exception {
+        var pair = registerTestUser();
+        UUID userId = tokenUserId(pair);
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement(
+                     "UPDATE identity.users SET status = 'suspended' WHERE id = ?")) {
+            statement.setObject(1, userId);
+            statement.executeUpdate();
+        }
+        assertAuthError(ErrorCode.ACCOUNT_UNAVAILABLE, () -> authService.refresh(pair.refreshToken()));
+        assertEquals(0, activeRefreshCount(userId));
+    }
+
+    @Test
+    void applicationRoleCannotReadOrResetLoginLimits() throws SQLException {
+        try (var connection = appConnection(); var statement = connection.createStatement()) {
+            assertEquals("42501", assertThrows(SQLException.class, () ->
+                    statement.executeQuery("SELECT * FROM identity.login_attempts")).getSQLState());
+            assertEquals("42501", assertThrows(SQLException.class, () ->
+                    statement.executeUpdate("DELETE FROM identity.login_attempts")).getSQLState());
+        }
+    }
+
+    @Test
+    void loginLocksRegisteredAndUnknownEmailsOnFifthFailure() throws Exception {
+        String email = "limit-" + UUID.randomUUID() + "@example.com";
+        authService.register(new RegisterRequest(email, "secure-password-123", "사용자", true, true));
+        for (String address : List.of(email, "unknown-" + UUID.randomUUID() + "@example.com")) {
+            for (int attempt = 1; attempt <= 5; attempt++) {
+                mockMvc.perform(post("/api/v1/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"email\":\"" + address.toUpperCase(java.util.Locale.ROOT)
+                                        + "\",\"password\":\"wrong-password\"}"))
+                        .andExpect(status().is(attempt < 5 ? 401 : 429))
+                        .andExpect(jsonPath("$.code").value(attempt < 5 ? "AUTH_004" : "AUTH_008"));
+            }
+        }
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"secure-password-123\"}"))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void loginSuccessAndExpiredLockResetFailures() throws Exception {
+        String email = "reset-" + UUID.randomUUID() + "@example.com";
+        authService.register(new RegisterRequest(email, "secure-password-123", "사용자", true, true));
+        for (int attempt = 0; attempt < 4; attempt++) {
+            assertAuthError(ErrorCode.INVALID_CREDENTIALS, () ->
+                    authService.login(new LoginRequest(email, "wrong-password")));
+        }
+        authService.login(new LoginRequest(email, "secure-password-123"));
+        for (int attempt = 0; attempt < 4; attempt++) {
+            assertAuthError(ErrorCode.INVALID_CREDENTIALS, () ->
+                    authService.login(new LoginRequest(email, "wrong-password")));
+        }
+        assertThrows(BusinessException.class, () -> authService.login(new LoginRequest(email, "wrong-password")));
+        String emailHash = identityCrypto.lookupHash(email);
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     UPDATE identity.login_attempts SET locked_until = now() - interval '1 second'
+                     WHERE email_lookup_hash = ?
+                     """)) {
+            statement.setString(1, emailHash);
+            assertEquals(1, statement.executeUpdate());
+        }
+        assertAuthError(ErrorCode.INVALID_CREDENTIALS, () ->
+                authService.login(new LoginRequest(email, "wrong-password")));
+        assertTrue(authService.login(new LoginRequest(email, "secure-password-123")).accessToken() != null);
+    }
+
+    @Test
+    void concurrentLoginFailuresCannotBypassLimit() throws Exception {
+        String email = "parallel-" + UUID.randomUUID() + "@example.com";
+        authService.register(new RegisterRequest(email, "secure-password-123", "사용자", true, true));
+        Callable<ErrorCode> attempt = () -> assertThrows(BusinessException.class, () ->
+                authService.login(new LoginRequest(email, "wrong-password"))).getErrorCode();
+        var outcomes = concurrently(List.of(attempt, attempt, attempt, attempt, attempt, attempt));
+        assertEquals(4, outcomes.stream().filter(ErrorCode.INVALID_CREDENTIALS::equals).count());
+        assertEquals(2, outcomes.stream().filter(code -> code.code().equals("AUTH_008")).count());
+    }
+
+    private AuthTokenResponse registerTestUser() {
+        return authService.register(new RegisterRequest(
+                "auth-" + UUID.randomUUID() + "@example.com", "secure-password-123", "사용자", true, true));
+    }
+
+    private UUID tokenUserId(AuthTokenResponse pair) throws Exception {
+        return UUID.fromString(SignedJWT.parse(pair.accessToken()).getJWTClaimsSet().getSubject());
+    }
+
+    private Object refreshOutcome(String token) {
+        try {
+            return authService.refresh(token);
+        } catch (BusinessException exception) {
+            return exception.getErrorCode();
+        }
+    }
+
+    private <T> List<T> concurrently(List<Callable<T>> tasks) throws Exception {
+        var ready = new CountDownLatch(tasks.size());
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(tasks.size());
+        try {
+            var futures = tasks.stream().map(task -> executor.submit(() -> {
+                ready.countDown();
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("동시 요청 시작 시간 초과");
+                }
+                return task.call();
+            })).toList();
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            var results = new java.util.ArrayList<T>();
+            for (var future : futures) {
+                results.add(future.get(20, TimeUnit.SECONDS));
+            }
+            return results;
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
+        }
+    }
+
+    private void assertAuthError(ErrorCode expected, org.junit.jupiter.api.function.Executable action) {
+        assertEquals(expected, assertThrows(BusinessException.class, action).getErrorCode());
+    }
+
+    private int activeRefreshCount(UUID userId) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT count(*) FROM identity.refresh_tokens WHERE user_id = ? AND revoked_at IS NULL
+                     """)) {
+            statement.setObject(1, userId);
+            try (var result = statement.executeQuery()) {
+                result.next();
+                return result.getInt(1);
+            }
+        }
     }
 
     private int outboxCount(UUID caseId) throws SQLException {

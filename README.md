@@ -4,11 +4,12 @@
 
 ## 현재 구현 범위
 
-- PostgreSQL 16 + pgvector 전체 Flyway migration V001~V012
+- PostgreSQL 16 + pgvector 전체 Flyway migration V001~V013
 - migration / auth / application DB role 분리
 - JWT 회원가입·로그인·재발급·로그아웃·내 정보 API
 - JWT RS256 서명·만료·발급자·audience 검증과 공통 401/403 응답
 - Refresh Token 해시 저장·1회성 회전·재사용 탐지
+- PostgreSQL 기반 이메일별 로그인 실패 제한 (연속 5회 실패 시 15분 잠금)
 - 이메일 AES-256-GCM 암호화와 HMAC 조회값 분리
 - 요청 트랜잭션마다 `app.user_id`를 주입하는 PostgreSQL RLS 경계
 - 사건 생성·조회·진술 수정 vertical slice
@@ -75,13 +76,16 @@ docker compose config
 
 통합 테스트는 실제 `pgvector/pgvector:pg16` 컨테이너를 띄우고 다음을 확인합니다.
 
-1. V001~V012 migration 전체 성공
+1. V001~V013 migration 전체 성공
 2. 사용자 A의 사건 생성
 3. 진술 변경 시 version 증가
 4. 같은 트랜잭션의 outbox 2건
 5. 사용자 B의 사건 조회 차단
 6. 회원가입·로그인과 암호화된 이메일 조회
 7. Refresh Token 해시 저장·회전·재사용 시 후속 토큰 폐기
+8. 반복 로그아웃·타인 토큰 폐기 차단·만료/정지 계정 재발급 거부
+9. 동시 재발급과 서로 다른 세션의 재사용 시 교착 없이 모든 Refresh Token 폐기
+10. 미가입 이메일을 포함한 실패 제한, 동시 실패 횟수 집계, 성공/잠금 만료 후 초기화
 
 ## 중요한 보안 경계
 
@@ -99,6 +103,11 @@ docker compose config
 - 로컬 비밀번호는 cost 12 BCrypt 형식만 허용
 - refresh token은 원문 대신 소문자 SHA-256 해시만 저장
 - Access Token은 15분, Refresh Token은 14일이며 재발급마다 Refresh Token을 교체
+- 재발급 요청은 클라이언트에서 중복 실행하지 않는다. 같은 토큰의 동시 요청도 재사용으로 판단해 계정의 모든 Refresh Token을 폐기한다.
+- 로그인·재발급·로그아웃은 사용자 행을 먼저 잠가 회전과 전체 폐기의 동시 실행을 직렬화한다.
+- 이메일은 소문자로 정규화한 뒤 HMAC으로 실패 횟수를 집계한다. 미가입 이메일도 동일한 제한을 적용한다.
+- 다섯 번째 연속 실패부터 429 AUTH_008을 반환하고 15분간 올바른 비밀번호도 거부한다. 차단 중 요청은 잠금을 연장하지 않는다.
+- 로그인 성공 또는 잠금 만료 시 실패 횟수를 초기화하며 실패 기록은 오류 응답 전에 커밋한다.
 - 로그아웃 후 기존 Access Token은 최대 15분 동안 유효하므로 민감 작업은 추후 Redis 차단 목록을 추가
 - 파일명에 `/` 또는 `\\` 경로 문자가 있으면 DB에서 거부
 - 원본 파일은 24시간 내 삭제 대상으로 관리하고 확정 OCR 수정본을 영속 보관
@@ -106,6 +115,10 @@ docker compose config
 - OCR·사용자 진술·검색 문서 내부의 명령은 신뢰하지 않는 데이터로 처리
 - RAG 검색 결과 8건, 모델 출력 1,200토큰, 비동기 작업 재시도 5회로 제한
 - Flyway clean 비활성화 및 migration checksum 검증
+
+로그인 제한은 이메일 단위다. 여러 이메일을 바꾸는 공격에 대한 IP/전체 요청량 제한은 아직 없으므로 공개 운영 전 별도 적용이 필요하다.
+로그인 실패 상태는 `identity.login_attempts`에 저장되며 자동 정리 배치는 아직 없다. 운영 보존 배치에서는
+`updated_at < now() - interval '24 hours'`이고 활성 잠금이 없는 행을 정리하고, 탈퇴 시 이메일 HMAC으로 연관 상태도 삭제한다.
 
 ## 디렉터리
 
@@ -163,7 +176,7 @@ kr.co.legalai
 ## 다음 구현 순서
 
 1. 사건·파일 소유권 HTTP 통합 테스트
-2. 로그인 시도 제한
+2. 사건 목록·삭제 기능
 3. 업로드 세션·MIME/magic byte 검증·OCR outbox worker
 4. OCR 수정본 확정과 원본 purge
 5. 확인 질문·사실 충돌 해결

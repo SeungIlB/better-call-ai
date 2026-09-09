@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
@@ -87,34 +88,45 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public AuthTokenResponse login(LoginRequest request) {
         String emailHash = identityCrypto.lookupHash(identityCrypto.normalizeEmail(request.email()));
-        return required(transaction.execute(status -> {
+        TokenOutcome outcome = required(transaction.execute(status -> {
+            var attempt = repository.lockLoginAttempt(emailHash);
+            Instant now = Instant.now();
+            if (attempt.isLocked(now)) {
+                return TokenOutcome.error(ErrorCode.LOGIN_RATE_LIMITED);
+            }
             LocalIdentity identity = repository.findLocalByEmailHash(emailHash).orElse(null);
             String storedHash = identity == null ? dummyPasswordHash : identity.passwordHash();
             boolean passwordMatches = passwordEncoder.matches(request.password(), storedHash);
             if (identity == null || !passwordMatches) {
-                throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
+                int failures = attempt.lockedUntil() == null ? attempt.failedAttempts() + 1 : 1;
+                repository.updateLoginAttempt(emailHash, failures,
+                        failures == 5 ? Instant.now().plus(Duration.ofMinutes(15)) : null);
+                return TokenOutcome.error(failures == 5
+                        ? ErrorCode.LOGIN_RATE_LIMITED : ErrorCode.INVALID_CREDENTIALS);
             }
+            repository.lockUser(identity.userId());
+            identity = repository.findLocalByUserId(identity.userId()).orElseThrow(
+                    () -> new BusinessException(ErrorCode.ACCOUNT_UNAVAILABLE));
             if (!identity.isActive()) {
-                throw new BusinessException(ErrorCode.ACCOUNT_UNAVAILABLE);
+                return TokenOutcome.error(ErrorCode.ACCOUNT_UNAVAILABLE);
             }
+            repository.updateLoginAttempt(emailHash, 0, null);
             repository.updateLastLogin(identity.userId());
-            return issueTokenPair(identity.userId(), Instant.now());
+            return TokenOutcome.success(issueTokenPair(identity.userId(), Instant.now()));
         }));
+        return outcome.result();
     }
 
     @Override
     public AuthTokenResponse refresh(String refreshToken) {
-        RefreshOutcome outcome = required(transaction.execute(status -> rotate(refreshToken, Instant.now())));
-        if (outcome.errorCode() != null) {
-            throw new BusinessException(outcome.errorCode());
-        }
-        return outcome.response();
+        return required(transaction.execute(status -> rotate(refreshToken))).result();
     }
 
     @Override
     public void logout(String refreshToken) {
         UUID userId = authenticatedUser.getUserId();
         required(transaction.execute(status -> {
+            repository.lockUser(userId);
             repository.findRefreshTokenForUpdate(sha256(refreshToken))
                     .filter(token -> token.userId().equals(userId))
                     .ifPresent(token -> repository.revokeRefreshToken(token.id(), Instant.now()));
@@ -137,26 +149,33 @@ public class AuthServiceImpl implements AuthService {
         );
     }
 
-    private RefreshOutcome rotate(String rawToken, Instant now) {
-        RefreshTokenEntity current = repository.findRefreshTokenForUpdate(sha256(rawToken)).orElse(null);
+    private TokenOutcome rotate(String rawToken) {
+        String tokenHash = sha256(rawToken);
+        UUID userId = repository.findRefreshTokenOwner(tokenHash).orElse(null);
+        if (userId == null) {
+            return TokenOutcome.error(ErrorCode.INVALID_REFRESH_TOKEN);
+        }
+        repository.lockUser(userId);
+        RefreshTokenEntity current = repository.findRefreshTokenForUpdate(tokenHash).orElse(null);
+        Instant now = Instant.now();
         if (current == null) {
-            return RefreshOutcome.error(ErrorCode.INVALID_REFRESH_TOKEN);
+            return TokenOutcome.error(ErrorCode.INVALID_REFRESH_TOKEN);
         }
         if (current.isRevoked()) {
             if (current.replacedByTokenId() != null) {
                 repository.revokeAllActiveRefreshTokens(current.userId(), now);
-                return RefreshOutcome.error(ErrorCode.REFRESH_TOKEN_REUSED);
+                return TokenOutcome.error(ErrorCode.REFRESH_TOKEN_REUSED);
             }
-            return RefreshOutcome.error(ErrorCode.INVALID_REFRESH_TOKEN);
+            return TokenOutcome.error(ErrorCode.INVALID_REFRESH_TOKEN);
         }
         if (current.isExpired(now)) {
             repository.revokeRefreshToken(current.id(), now);
-            return RefreshOutcome.error(ErrorCode.INVALID_REFRESH_TOKEN);
+            return TokenOutcome.error(ErrorCode.INVALID_REFRESH_TOKEN);
         }
         LocalIdentity identity = repository.findLocalByUserId(current.userId()).orElse(null);
         if (identity == null || !identity.isActive()) {
             repository.revokeAllActiveRefreshTokens(current.userId(), now);
-            return RefreshOutcome.error(ErrorCode.ACCOUNT_UNAVAILABLE);
+            return TokenOutcome.error(ErrorCode.ACCOUNT_UNAVAILABLE);
         }
 
         var replacement = tokenService.createRefreshToken(now);
@@ -169,7 +188,7 @@ public class AuthServiceImpl implements AuthService {
         );
         repository.replaceRefreshToken(current.id(), replacementId, now);
         var access = tokenService.createAccessToken(current.userId(), now);
-        return RefreshOutcome.success(toResponse(access, replacement));
+        return TokenOutcome.success(toResponse(access, replacement));
     }
 
     private AuthTokenResponse issueTokenPair(UUID userId, Instant now) {
@@ -206,13 +225,21 @@ public class AuthServiceImpl implements AuthService {
         return Objects.requireNonNull(value, "인증 트랜잭션 결과가 없습니다.");
     }
 
-    private record RefreshOutcome(AuthTokenResponse response, ErrorCode errorCode) {
-        static RefreshOutcome success(AuthTokenResponse response) {
-            return new RefreshOutcome(response, null);
+    private record TokenOutcome(AuthTokenResponse response, ErrorCode errorCode) {
+        static TokenOutcome success(AuthTokenResponse response) {
+            return new TokenOutcome(response, null);
         }
 
-        static RefreshOutcome error(ErrorCode errorCode) {
-            return new RefreshOutcome(null, errorCode);
+        static TokenOutcome error(ErrorCode errorCode) {
+            return new TokenOutcome(null, errorCode);
+        }
+
+        AuthTokenResponse result() {
+            // 실패 횟수와 토큰 폐기를 커밋한 다음 예외를 전달한다.
+            if (errorCode != null) {
+                throw new BusinessException(errorCode);
+            }
+            return response;
         }
     }
 }

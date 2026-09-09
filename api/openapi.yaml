@@ -39,6 +39,10 @@ paths:
     post:
       operationId: login
       summary: 로컬 계정 로그인
+      description: >
+        정규화 이메일별 연속 실패 5회부터 15분간 429 AUTH_008을 반환한다.
+        미가입 이메일에도 동일하게 적용하며 잠금 중 요청은 만료 시각을 연장하지 않는다.
+        성공 또는 잠금 만료 후 실패 횟수를 초기화한다.
       security: []
       requestBody:
         required: true
@@ -52,10 +56,19 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AuthTokenSuccess' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: 로그인 실패 제한 (AUTH_008). 잠금이 해제될 때까지 재시도를 중단한다.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /api/v1/auth/refresh:
     post:
       operationId: refreshToken
       summary: Refresh Token 1회성 회전
+      description: >
+        동일 토큰의 동시 재발급도 재사용으로 판단하여 해당 계정의 모든 Refresh Token을 폐기한다.
+        클라이언트는 재발급 요청을 한 번만 실행하며 AUTH_006이면 다시 로그인한다.
+        이미 발급된 Access Token은 만료 전까지 유효하다.
       security: []
       requestBody:
         required: true
@@ -73,6 +86,9 @@ paths:
     post:
       operationId: logout
       summary: 현재 Refresh Token 폐기
+      description: >
+        반복 요청은 204로 처리하며 다른 사용자의 토큰에는 영향을 주지 않는다.
+        이미 발급된 Access Token은 만료 전까지 유효하다.
       requestBody:
         required: true
         content:

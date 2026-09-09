@@ -1,6 +1,7 @@
 package kr.co.legalai.auth.repository;
 
 import kr.co.legalai.auth.entity.LocalIdentity;
+import kr.co.legalai.auth.entity.LoginAttempt;
 import kr.co.legalai.auth.entity.RefreshTokenEntity;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -17,6 +18,41 @@ public class AuthRepository {
 
     public AuthRepository(@Qualifier("authJdbcTemplate") JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    public LoginAttempt lockLoginAttempt(String emailHash) {
+        jdbcTemplate.update("""
+                INSERT INTO identity.login_attempts(email_lookup_hash) VALUES (?)
+                ON CONFLICT (email_lookup_hash) DO NOTHING
+                """, emailHash);
+        return jdbcTemplate.queryForObject("""
+                SELECT failed_attempts, locked_until FROM identity.login_attempts
+                WHERE email_lookup_hash = ? FOR UPDATE
+                """, (result, rowNumber) -> new LoginAttempt(
+                result.getInt("failed_attempts"),
+                result.getTimestamp("locked_until") == null
+                        ? null : result.getTimestamp("locked_until").toInstant()
+        ), emailHash);
+    }
+
+    public void updateLoginAttempt(String emailHash, int failures, Instant lockedUntil) {
+        jdbcTemplate.update("""
+                UPDATE identity.login_attempts
+                SET failed_attempts = ?, locked_until = ?, updated_at = clock_timestamp()
+                WHERE email_lookup_hash = ?
+                """, failures, lockedUntil == null ? null : Timestamp.from(lockedUntil), emailHash);
+    }
+
+    public void lockUser(UUID userId) {
+        // 로그인·재발급·폐기는 사용자 행을 먼저 잠근 뒤 토큰 행을 잠근다.
+        jdbcTemplate.query("SELECT id FROM identity.users WHERE id = ? FOR UPDATE",
+                (result, rowNumber) -> result.getObject("id", UUID.class), userId);
+    }
+
+    public Optional<UUID> findRefreshTokenOwner(String tokenHash) {
+        return jdbcTemplate.query("SELECT user_id FROM identity.refresh_tokens WHERE token_hash = ?",
+                (result, rowNumber) -> result.getObject("user_id", UUID.class), tokenHash)
+                .stream().findFirst();
     }
 
     public Optional<LocalIdentity> findLocalByEmailHash(String emailHash) {
