@@ -71,6 +71,25 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class CaseFlowIntegrationTest {
     @Test
+    void webShellIsPublicAndFileListingIsPaginatedAndOwnerScoped() throws Exception {
+        mockMvc.perform(get("/")).andExpect(status().isOk());
+        mockMvc.perform(get("/assets/app.mjs")).andExpect(status().isOk());
+        var fixture = pendingOcrFixture();
+        String path = "/api/v1/cases/" + fixture.caseId() + "/files";
+        mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
+        var other = registerTestUser();
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + other.accessToken())).andExpect(status().isNotFound());
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].id").value(fixture.fileId().toString()))
+                .andExpect(jsonPath("$.data.hasNext").value(false));
+        mockMvc.perform(get(path).param("page", "0").header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isBadRequest());
+        ocrUpdate("UPDATE casework.files SET removed_at=now() WHERE id=?", fixture.fileId());
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty());
+    }
+
+    @Test
     void savedAnalysisReplaysAndBecomesStaleAfterCaseAndOcrChanges() throws Exception {
         var fixture = ocrFixture();
         confirmOcr(fixture, saveOcr(fixture, 0, "확정한 집 수리 자료")).andExpect(status().isOk());

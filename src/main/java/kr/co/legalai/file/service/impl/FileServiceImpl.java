@@ -1,5 +1,6 @@
 package kr.co.legalai.file.service.impl;
 
+import kr.co.legalai.common.response.PageResponse;
 import lombok.RequiredArgsConstructor;
 
 import kr.co.legalai.common.exception.BusinessException;
@@ -140,5 +141,16 @@ public class FileServiceImpl implements FileService {
     public FileResponse getFile(UUID caseId, UUID fileId) {
         return transaction.execute(userId -> repository.find(caseId, fileId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.FILE_NOT_FOUND)));
+    }
+
+    @Override
+    public PageResponse<FileResponse> listFiles(UUID caseId, int page, int pageSize) {
+        if (page < 1 || page > 10000 || pageSize < 1 || pageSize > 100) throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        return transaction.execute(user -> {
+            if (!repository.caseExists(caseId)) throw new CaseNotFoundException();
+            var files = repository.list(caseId, page, pageSize);
+            return new PageResponse<>(files.subList(0, Math.min(pageSize, files.size())),
+                    page, pageSize, files.size() > pageSize);
+        });
     }
 }

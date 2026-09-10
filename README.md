@@ -1,5 +1,7 @@
 # Better Call AI Backend
 
+웹 화면은 서버 실행 후 `http://localhost:8080/`에서 사용할 수 있다. 로그인 → 사건 작성 → 업로드·OCR 확인 → 분석 이력·출처 → 대응 메시지 다운로드를 연결했다. TDS 참고 범위, 실행 명령과 테스트는 [프론트 가이드](docs/frontend.md)를 확인한다. `.env`를 현재 프로세스에 읽어 실행하려면 `.\scripts\run-local.ps1`을 사용한다.
+
 단계별 변경·검증·남은 한계는 [구현 기록](docs/implementation-progress.md)을 확인한다. 최신 사용자 지시에 따라 로컬 커밋만 하고 원격 push는 하지 않는다.
 
 `POST /api/v1/cases/{caseId}/analyses`는 `Idempotency-Key` UUID와 `fileId`, `query`, `expectedCaseVersion`, 선택적 `excerptStart`를 받아 서버가 생성한 검토용 초안을 저장한다. `GET` 같은 경로는 공통 페이지 목록(기본 10, 최대 20), `GET /{id}`는 상세 조회다. 동일 키·동일 입력은 외부 재호출 없이 재사용하고 다른 입력은 409 `ANALYSIS_002`, 다른 진행 중 요청은 409 `ANALYSIS_003`이다. 실행 중 재조회는 202, 완료·실패 기록은 200이다. 최초 외부 호출 실패는 해당 오류 상태를 반환하며 실패 후 재실행에는 새 키를 사용한다.

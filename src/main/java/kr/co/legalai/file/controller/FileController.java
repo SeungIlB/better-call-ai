@@ -1,5 +1,6 @@
 package kr.co.legalai.file.controller;
 
+import kr.co.legalai.common.response.PageResponse;
 import lombok.RequiredArgsConstructor;
 
 import kr.co.legalai.common.response.ApiResponse;
@@ -17,6 +18,12 @@ import java.util.UUID;
 @RequestMapping("/api/v1/cases/{caseId}/files")
 public class FileController {
     private final FileService service;
+
+    @GetMapping
+    public ApiResponse<PageResponse<FileResponse>> list(@PathVariable UUID caseId,
+            @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(service.listFiles(caseId, page, pageSize));
+    }
 
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

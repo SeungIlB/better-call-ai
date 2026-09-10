@@ -575,6 +575,33 @@ paths:
   /api/v1/cases/{caseId}/files:
     parameters:
       - $ref: '#/components/parameters/CaseId'
+    get:
+      operationId: listCaseFiles
+      summary: 내 사건의 파일 메타데이터 목록
+      description: 제거된 파일 제외, 원본 삭제된 파일 포함. 생성 시각·ID 내림차순. 원본 경로와 OCR 본문은 반환하지 않는다.
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, maximum: 10000, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: 공통 페이지 응답
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  traceId: { type: [string, 'null'] }
+                  data:
+                    type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/FileResponse' } }
+                      page: { type: integer }
+                      pageSize: { type: integer }
+                      hasNext: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: CASE_001 내 활성 사건이 아님 }
     post:
       operationId: uploadFile
       summary: 내 사건의 원본 파일 임시 업로드

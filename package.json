@@ -1,0 +1,10 @@
+{
+  "name": "better-call-ai-ui-checks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/ui-utils.test.mjs",
+    "test:ui": "node scripts/ui-smoke.mjs"
+  },
+  "devDependencies": { "playwright-core": "1.62.1" }
+}

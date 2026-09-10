@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.List;
 
 @Repository
 @RequiredArgsConstructor
@@ -102,5 +103,19 @@ public class FileRepository {
                 VALUES ('FILE_UPLOADED', 'file', ?, jsonb_build_object('caseId', ?::text, 'fileId', ?::text),
                         ?, now() + interval '30 days')
                 """, fileId, caseId, fileId, "file-uploaded:" + fileId);
+    }
+
+    public List<FileResponse> list(UUID caseId, int page, int size) {
+        return jdbc.query("""
+                SELECT id,case_id,original_name,mime_type,size_bytes,page_count,lifecycle_status,
+                    malware_status,purge_status,created_at,storage_expires_at
+                FROM casework.files WHERE case_id=? AND removed_at IS NULL
+                ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?
+                """, (row, index) -> FileResponse.builder().id(row.getObject("id", UUID.class)).caseId(row.getObject("case_id", UUID.class))
+                .originalName(row.getString("original_name")).mimeType(row.getString("mime_type")).sizeBytes(row.getLong("size_bytes"))
+                .pageCount(row.getObject("page_count", Integer.class)).lifecycleStatus(row.getString("lifecycle_status"))
+                .malwareStatus(row.getString("malware_status")).purgeStatus(row.getString("purge_status"))
+                .createdAt(row.getTimestamp("created_at").toInstant()).storageExpiresAt(row.getTimestamp("storage_expires_at").toInstant())
+                .build(), caseId, size + 1, (long) (page - 1) * size);
     }
 }
