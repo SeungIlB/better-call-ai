@@ -157,7 +157,7 @@ public class OcrServiceImpl implements OcrService {
         if (file.extractionId() == null) throw error(ErrorCode.OCR_NOT_READY);
         var extraction = repository.extraction(file.id(), file.extractionId()).orElseThrow();
         return OcrResponse.builder().fileId(file.id()).extractionId(extraction.id()).status(extraction.status())
-                .rawText(extraction.rawText()).latestRevision(repository.latest(file.id()).orElse(null))
+                .rawText(extraction.rawText()).visionJson(extraction.visionJson()).latestRevision(repository.latest(file.id()).orElse(null))
                 .confirmedRevision(file.revisionId() == null ? null : repository.revision(file.id(), file.revisionId()).orElse(null))
                 .build();
     }

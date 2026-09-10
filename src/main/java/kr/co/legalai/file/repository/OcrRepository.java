@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +15,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OcrRepository {
     private final JdbcTemplate jdbc;
+    private final ObjectMapper mapper;
     private static final RowMapper<OcrRevisionResponse> REVISION = (row, index) -> OcrRevisionResponse.builder()
             .id(row.getObject("id", UUID.class)).extractionId(row.getObject("extraction_id", UUID.class))
             .revision(row.getInt("revision_no")).correctedText(row.getString("corrected_text"))
@@ -36,16 +38,18 @@ public class OcrRepository {
     }
 
     public Optional<OcrExtraction> extraction(UUID fileId, UUID id) {
-        return jdbc.query("SELECT id, status, raw_text FROM casework.file_extractions WHERE file_id = ? AND id = ?",
+        return jdbc.query("SELECT id, status, raw_text, vision_json FROM casework.file_extractions WHERE file_id = ? AND id = ?",
                 (row, i) -> OcrExtraction.builder().id(row.getObject("id", UUID.class))
-                        .status(row.getString("status")).rawText(row.getString("raw_text")).build(),
+                        .status(row.getString("status")).rawText(row.getString("raw_text"))
+                        .visionJson(row.getString("vision_json")).build(),
                 fileId, id).stream().findFirst();
     }
 
     public Optional<OcrExtraction> byKey(UUID fileId, UUID key) {
-        return jdbc.query("SELECT id, status, raw_text FROM casework.file_extractions WHERE file_id = ? AND idempotency_key = ?",
+        return jdbc.query("SELECT id, status, raw_text, vision_json FROM casework.file_extractions WHERE file_id = ? AND idempotency_key = ?",
                 (row, i) -> OcrExtraction.builder().id(row.getObject("id", UUID.class))
-                        .status(row.getString("status")).rawText(row.getString("raw_text")).build(),
+                        .status(row.getString("status")).rawText(row.getString("raw_text"))
+                        .visionJson(row.getString("vision_json")).build(),
                 fileId, requestKey(fileId, key)).stream().findFirst();
     }
 
@@ -81,15 +85,24 @@ public class OcrRepository {
 
     public boolean complete(UUID fileId, UUID id, OcrText text) {
         int count = jdbc.update("""
-                UPDATE casework.file_extractions SET raw_text = ?, model_name = ?, provider_response_id = ?,
+                UPDATE casework.file_extractions SET raw_text = ?, vision_json = ?::jsonb, model_name = ?, provider_response_id = ?,
                     input_tokens = ?, output_tokens = ?, status = 'succeeded', completed_at = clock_timestamp()
                 WHERE file_id = ? AND id = ? AND status = 'running'
                   AND started_at > clock_timestamp() - interval '3 minutes'
-                """, text.text(), text.model(), text.responseId(), text.inputTokens(), text.outputTokens(), fileId, id);
+                """, text.text(), visionJson(text), text.model(), text.responseId(), text.inputTokens(), text.outputTokens(), fileId, id);
         if (count == 1) {
             jdbc.update("UPDATE casework.files SET lifecycle_status = 'REVIEW_REQUIRED' WHERE id = ?", fileId);
         }
         return count == 1;
+    }
+
+    private String visionJson(OcrText text) {
+        try {
+            return mapper.writeValueAsString(java.util.Map.of("observations", text.observations() == null ? java.util.List.of() : text.observations(),
+                    "unknowns", text.unknowns() == null ? java.util.List.of() : text.unknowns()));
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException("시각 관찰 결과를 저장할 수 없습니다.", failure);
+        }
     }
 
     public void fail(UUID fileId, UUID id) {

@@ -75,6 +75,15 @@ class OpenAiOcrRepositoryTest {
     }
 
     @Test
+    void structuredVisionResultKeepsTextAndSeparatesObservationsFromUnknowns() {
+        body.set(success("{\"text\":\"[인식 가능한 텍스트 없음]\",\"observations\":[\"천장에 변색 흔적이 보인다\"],\"unknowns\":[\"누수 원인과 책임 주체\"]}"));
+        var result = client("test-key", "vision-test").extract(new byte[]{1, 2, 3}, "image/jpeg");
+        assertEquals("[인식 가능한 텍스트 없음]", result.text());
+        assertEquals(List.of("천장에 변색 흔적이 보인다"), result.observations());
+        assertEquals(List.of("누수 원인과 책임 주체"), result.unknowns());
+    }
+
+    @Test
     void pdfUsesInputFileWithGenericFilename() {
         client("test-key", "vision-test").extract(new byte[]{1}, "application/pdf");
         JsonNode attachment = sent.get().path("input").get(0).path("content").get(1);

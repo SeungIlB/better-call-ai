@@ -4,4 +4,4 @@ import lombok.Builder;
 import java.util.UUID;
 
 @Builder
-public record OcrExtraction(UUID id, String status, String rawText) {}
+public record OcrExtraction(UUID id, String status, String rawText, String visionJson) {}

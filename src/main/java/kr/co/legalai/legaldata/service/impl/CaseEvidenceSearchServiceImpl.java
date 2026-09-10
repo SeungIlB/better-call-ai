@@ -37,7 +37,8 @@ public class CaseEvidenceSearchServiceImpl implements CaseEvidenceSearchService 
                 return excerpt(current, request.excerptStart() == null ? 0 : request.excerptStart());
             });
             // 소유권 확인 트랜잭션 종료 후 외부 호출. 원본 파일·미확정 초안은 읽지 않는다.
-            var results = search.search(request.query().strip() + "\n확정 문서 발췌:\n" + excerpt.text());
+            var results = search.search(request.query().strip() + "\n확정 문서 발췌:\n" + excerpt.text()
+                    + "\n사진 관찰 JSON:\n" + (excerpt.visionJson() == null ? "{}" : excerpt.visionJson()));
             transactions.execute(userId -> {
                 checkVersion(caseId, request.expectedCaseVersion());
                 var current = evidence.findCurrent(caseId, fileId);
@@ -69,7 +70,7 @@ public class CaseEvidenceSearchServiceImpl implements CaseEvidenceSearchService 
         if (end < text.length() && Character.isHighSurrogate(text.charAt(end - 1))
                 && Character.isLowSurrogate(text.charAt(end))) end--;
         return EvidenceExcerptResponse.builder().fileId(current.fileId()).revisionId(current.revisionId())
-                .text(text.substring(start, end)).start(start).end(end).totalLength(text.length())
+                .text(text.substring(start, end)).visionJson(current.visionJson()).start(start).end(end).totalLength(text.length())
                 .partial(start > 0 || end < text.length()).build();
     }
 }

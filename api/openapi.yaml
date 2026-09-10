@@ -1086,12 +1086,13 @@ components:
         createdAt: { type: string, format: date-time }
     OcrResult:
       type: object
-      required: [fileId, extractionId, status, rawText, latestRevision, confirmedRevision]
+      required: [fileId, extractionId, status, rawText, visionJson, latestRevision, confirmedRevision]
       properties:
         fileId: { type: string, format: uuid }
         extractionId: { type: string, format: uuid }
         status: { type: string, enum: [running, succeeded, failed] }
         rawText: { type: [string, 'null'], maxLength: 100000, description: 기계 인식 원문. HTML로 직접 삽입 금지 }
+        visionJson: { type: [string, 'null'], maxLength: 20000, description: 사진에서 관찰한 내용과 확인 불가 사항 JSON. 원인·책임 판단이 아님 }
         latestRevision:
           anyOf:
             - $ref: '#/components/schemas/OcrRevision'

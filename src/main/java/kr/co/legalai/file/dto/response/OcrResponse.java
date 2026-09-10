@@ -5,4 +5,4 @@ import java.util.UUID;
 
 @Builder
 public record OcrResponse(UUID fileId, UUID extractionId, String status, String rawText,
-        OcrRevisionResponse latestRevision, OcrRevisionResponse confirmedRevision) {}
+        String visionJson, OcrRevisionResponse latestRevision, OcrRevisionResponse confirmedRevision) {}
