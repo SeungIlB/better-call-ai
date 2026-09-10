@@ -108,6 +108,7 @@ public class CaseServiceImpl implements CaseService {
         return new CaseResponse(
                 entity.id(),
                 entity.title(),
+                entity.disputeDomain(),
                 entity.status(),
                 entity.userPartyRole(),
                 entity.userGoal(),

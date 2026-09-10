@@ -26,4 +26,12 @@
 검증: `LegalDraftServiceTest`의 다중 자료 결합·날짜/금액 차이·기존 단일 자료 회귀, Java 전체 테스트, UI 테스트, OpenAPI YAML 파싱, `git diff --check`.
 
 다음 단계: 사건 도메인 분리.
+
+## 2. 사건 도메인 기반 — 완료
+
+기존 `casework.cases.dispute_domain` 컬럼을 API·조회 모델·프론트에 연결했다. 기존 사건의 null 값은 `housing_lease`로 보정하고, 생성 요청은 `housing_lease`, `vehicle_accident`, `assault`만 허용한다. 차량 사고와 폭행 선택지는 데이터·검색·프롬프트가 준비되기 전까지 화면에서 비활성화한다. 따라서 이번 단계는 분류 저장 기반만 만들었으며, 비주택 법률 답변을 지원한다고 표시하지 않는다.
+
+검증: 사건 통합 테스트, Java 전체 테스트, UI 테스트, OpenAPI YAML 파싱, `git diff --check`.
+
+다음 단계: 차량 사고 법률 데이터·검색어·프롬프트·평가 추가.
 - Java·Node·UI·OpenAPI·diff 검증 후 로컬 커밋한다.

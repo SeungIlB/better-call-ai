@@ -6,6 +6,7 @@ import java.util.UUID;
 public record CaseEntity(
         UUID id,
         String title,
+        String disputeDomain,
         String status,
         String userPartyRole,
         String userGoal,

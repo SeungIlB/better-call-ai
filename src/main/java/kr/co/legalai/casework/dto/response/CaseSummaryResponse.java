@@ -7,6 +7,7 @@ import java.util.UUID;
 public record CaseSummaryResponse(
         UUID id,
         String title,
+        String disputeDomain,
         String status,
         String userPartyRole,
         int version,
