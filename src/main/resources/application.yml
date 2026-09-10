@@ -74,6 +74,7 @@ integrations:
   openai:
     api-key: ${OPENAI_API_KEY:}
     chat-model: ${OPENAI_CHAT_MODEL:}
+    ocr-model: ${OPENAI_OCR_MODEL:${OPENAI_CHAT_MODEL:}}
   clamav:
     host: ${CLAMAV_HOST:127.0.0.1}
     port: ${CLAMAV_PORT:3310}

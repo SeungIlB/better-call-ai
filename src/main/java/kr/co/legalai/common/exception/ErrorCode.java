@@ -33,6 +33,11 @@ public enum ErrorCode {
     CHAT_NOT_FOUND(HttpStatus.NOT_FOUND, "CHAT_004", "대화를 찾을 수 없습니다."),
     CHAT_SAVE_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "CHAT_005", "답변 저장을 확인하지 못했습니다. 대화를 다시 조회해 주세요."),
     CHAT_RETRY_CONFLICT(HttpStatus.CONFLICT, "CHAT_006", "현재 대화를 다시 조회한 후 마지막 질문을 재시도해 주세요."),
+    OCR_NOT_READY(HttpStatus.CONFLICT, "OCR_001", "검토할 OCR 결과가 아직 없습니다."),
+    OCR_CONFLICT(HttpStatus.CONFLICT, "OCR_002", "OCR 결과 또는 수정본이 변경되었습니다. 다시 조회해 주세요."),
+    OCR_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "OCR_003", "OCR 처리를 완료하지 못했습니다. 결과를 조회한 뒤 다시 시도해 주세요."),
+    OCR_BUSY(HttpStatus.TOO_MANY_REQUESTS, "OCR_004", "OCR 처리 중입니다. 잠시 후 결과를 확인해 주세요."),
+    OCR_ORIGINAL_UNAVAILABLE(HttpStatus.CONFLICT, "OCR_005", "OCR에 사용할 원본이 만료되었거나 사용할 수 없습니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_999", "일시적인 오류가 발생했습니다.");
 
     private final HttpStatus status;

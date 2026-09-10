@@ -177,6 +177,9 @@ class CaseFlowIntegrationTest {
     @Autowired
     private FileCleanupRepository fileCleanupRepository;
 
+    @MockitoBean
+    private kr.co.legalai.file.repository.OpenAiOcrRepository openAiOcr;
+
     @Autowired
     private IdentityCrypto identityCrypto;
 
@@ -276,7 +279,7 @@ class CaseFlowIntegrationTest {
             result.next();
             assertEquals(47, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(83, result.getInt("described_column_count"));
+            assertEquals(86, result.getInt("described_column_count"));
         }
     }
 
@@ -1983,6 +1986,307 @@ class CaseFlowIntegrationTest {
                 }
             }
         }
+    }
+
+    @Test
+    void ocrPreservesMachineTextAndConfirmsRevisionBeforePurgingOriginal() throws Exception {
+        var fixture = ocrFixture();
+        UUID analysisId = UUID.randomUUID();
+        ocrUpdate("""
+                INSERT INTO aiops.analysis_runs(id, case_id, trigger_type, version_no, idempotency_key,
+                    input_fingerprint, status)
+                VALUES (?, ?, 'initial', 1, ?, ?, 'succeeded')
+                """, analysisId, fixture.caseId(), UUID.randomUUID().toString(), "a".repeat(64));
+        UUID revision = saveOcr(fixture, 0, "사용자가 확인한 계약 내용");
+        assertTrue(Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        ocrView(fixture).andExpect(jsonPath("$.data.rawText").value("기계가 읽은 계약 내용"))
+                .andExpect(jsonPath("$.data.latestRevision.current").value(false))
+                .andExpect(jsonPath("$.data.confirmedRevision").doesNotExist());
+        confirmOcr(fixture, revision).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.current").value(true));
+        assertTrue(!Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        assertPurgeState(fixture.fileId(), "purged", 1);
+        try (var connection = adminConnection(); var query = connection.prepareStatement(
+                "SELECT stale_at, stale_reason FROM aiops.analysis_runs WHERE id = ?")) {
+            query.setObject(1, analysisId);
+            try (var row = query.executeQuery()) {
+                assertTrue(row.next());
+                assertTrue(row.getTimestamp(1) != null);
+                assertEquals("ocr_changed", row.getString(2));
+            }
+        }
+        confirmOcr(fixture, revision).andExpect(status().isOk());
+        assertPurgeState(fixture.fileId(), "purged", 1);
+        ocrView(fixture).andExpect(jsonPath("$.data.rawText").value("기계가 읽은 계약 내용"))
+                .andExpect(jsonPath("$.data.confirmedRevision.correctedText").value("사용자가 확인한 계약 내용"));
+        mockMvc.perform(get("/api/v1/cases/{caseId}", fixture.caseId())
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value(2));
+    }
+
+    @Test
+    void ocrRevisionReplayIsIdempotentAndOlderDraftCannotReplaceLatest() throws Exception {
+        var fixture = ocrFixture();
+        UUID first = saveOcr(fixture, 0, "첫 수정");
+        assertEquals(first, saveOcr(fixture, 0, "첫 수정"));
+        mockMvc.perform(post(ocrPath(fixture) + "-revisions")
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("extractionId", fixture.extractionId(), "expectedRevision", 0,
+                                        "correctedText", "충돌하는 수정"))))
+                .andExpect(status().isConflict());
+        UUID second = saveOcr(fixture, 1, "두 번째 수정");
+        confirmOcr(fixture, first).andExpect(status().isConflict());
+        confirmOcr(fixture, second).andExpect(status().isOk());
+        UUID third = saveOcr(fixture, 2, "원본 삭제 후 수정");
+        ocrView(fixture).andExpect(jsonPath("$.data.confirmedRevision.id").value(second.toString()));
+        confirmOcr(fixture, third).andExpect(status().isOk());
+        mockMvc.perform(get(ocrPath(fixture) + "-revisions?page=1&pageSize=2")
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.hasNext").value(true))
+                .andExpect(jsonPath("$.data.items[0].revision").value(3))
+                .andExpect(jsonPath("$.data.items[1].current").value(false));
+        assertPurgeState(fixture.fileId(), "purged", 1);
+    }
+
+    @Test
+    void ocrRequiresConsentAndEnforcesOwnershipAndInputLimits() throws Exception {
+        var fixture = ocrFixture();
+        var other = registerTestUser();
+        mockMvc.perform(post(ocrPath(fixture)).header("Idempotency-Key", UUID.randomUUID())
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"externalOcrAccepted\":false}"))
+                .andExpect(status().isBadRequest());
+        for (String suffix : List.of("", "-revisions")) {
+            mockMvc.perform(get(ocrPath(fixture) + suffix)
+                            .header("Authorization", "Bearer " + other.accessToken()))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(get(ocrPath(fixture) + suffix)).andExpect(status().isUnauthorized());
+        }
+        mockMvc.perform(post(ocrPath(fixture)).header("Idempotency-Key", UUID.randomUUID())
+                        .header("Authorization", "Bearer " + other.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"externalOcrAccepted\":true}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post(ocrPath(fixture) + "-revisions")
+                        .header("Authorization", "Bearer " + other.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("extractionId", fixture.extractionId(), "expectedRevision", 0,
+                                        "correctedText", "다른 사용자"))))
+                .andExpect(status().isNotFound());
+        for (String text : List.of(" ", "x".repeat(100001), "x" + (char) 0)) {
+            mockMvc.perform(post(ocrPath(fixture) + "-revisions")
+                            .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                            .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                    java.util.Map.of("extractionId", fixture.extractionId(), "expectedRevision", 0,
+                                            "correctedText", text))))
+                    .andExpect(status().isBadRequest());
+        }
+        UUID revision = saveOcr(fixture, 0, "확인할 내용");
+        mockMvc.perform(post("/api/v1/cases/{caseId}/files/{fileId}/confirm", fixture.caseId(), fixture.fileId())
+                        .header("Authorization", "Bearer " + other.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("revisionId", revision, "sensitiveDataReviewed", true))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/v1/cases/{caseId}/files/{fileId}/confirm", fixture.caseId(), fixture.fileId())
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("revisionId", revision, "sensitiveDataReviewed", false))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get(ocrPath(fixture) + "-revisions?page=0")
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.times(1))
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void ocrFailureReplayDoesNotCallAgainAndExplicitNewKeyRetries() throws Exception {
+        var fixture = pendingOcrFixture();
+        UUID key = UUID.randomUUID();
+        org.mockito.Mockito.when(openAiOcr.extract(org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.anyString())).thenThrow(new BusinessException(ErrorCode.OCR_UNAVAILABLE));
+        startOcr(fixture, key).andExpect(status().isServiceUnavailable());
+        startOcr(fixture, key).andExpect(status().isServiceUnavailable());
+        ocrView(fixture).andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.rawText").doesNotExist());
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.times(1))
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+        org.mockito.Mockito.doReturn(ocrAnswer()).when(openAiOcr).extract(
+                org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+        startOcr(fixture, UUID.randomUUID()).andExpect(status().isOk());
+        assertTrue(Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+    }
+
+    @Test
+    void ocrConcurrentRequestsDoNotHoldDatabaseConnectionOrRunTwice() throws Exception {
+        var fixture = pendingOcrFixture();
+        UUID key = UUID.randomUUID();
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        org.mockito.Mockito.when(openAiOcr.extract(org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+                    entered.countDown();
+                    assertTrue(release.await(10, TimeUnit.SECONDS));
+                    return ocrAnswer();
+                });
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var first = executor.submit(() -> startOcr(fixture, key).andReturn().getResponse().getStatus());
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS));
+                startOcr(fixture, key).andExpect(status().isTooManyRequests());
+                startOcr(fixture, UUID.randomUUID()).andExpect(status().isTooManyRequests());
+                ocrView(fixture).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("running"));
+            } finally {
+                release.countDown();
+            }
+            assertEquals(200, first.get(10, TimeUnit.SECONDS));
+        }
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.times(1))
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void ocrConfirmationRollbackKeepsOriginalAndDraft() throws Exception {
+        var fixture = ocrFixture();
+        UUID revision = saveOcr(fixture, 0, "확정할 내용");
+        ocrUpdate("""
+                INSERT INTO ops.outbox_events(event_type, aggregate_type, aggregate_id, idempotency_key, retention_expires_at)
+                VALUES ('TEST_CONFLICT', 'file', ?, ?, now() + interval '1 day')
+                """, fixture.fileId(), "ocr-confirmed:" + revision);
+        confirmOcr(fixture, revision).andExpect(status().isInternalServerError());
+        assertTrue(Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        ocrView(fixture).andExpect(jsonPath("$.data.confirmedRevision").doesNotExist())
+                .andExpect(jsonPath("$.data.latestRevision.current").value(false));
+        mockMvc.perform(get("/api/v1/cases/{caseId}", fixture.caseId())
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(jsonPath("$.data.version").value(1));
+    }
+
+    @Test
+    void ocrPurgeFailureKeepsConfirmedTextAndBackgroundCleanupRetries() throws Exception {
+        var fixture = ocrFixture();
+        UUID revision = saveOcr(fixture, 0, "원본 삭제 장애에도 유지할 확정본");
+        Path original = uploadRoot.resolve(fixture.fileId() + ".upload");
+        Files.delete(original);
+        Files.createDirectory(original);
+        Path child = Files.createFile(original.resolve("block-delete"));
+        try {
+            confirmOcr(fixture, revision).andExpect(status().isOk());
+            assertPurgeState(fixture.fileId(), "retrying", 1);
+            confirmOcr(fixture, revision).andExpect(status().isOk());
+            assertPurgeState(fixture.fileId(), "retrying", 1);
+            ocrView(fixture).andExpect(jsonPath("$.data.confirmedRevision.correctedText")
+                    .value("원본 삭제 장애에도 유지할 확정본"));
+        } finally {
+            Files.delete(child);
+            Files.delete(original);
+        }
+        makeFilePurgeDue(fixture.fileId());
+        fileCleanupService.cleanup();
+        assertPurgeState(fixture.fileId(), "purged", 2);
+    }
+
+    @Test
+    void ocrLateResultAfterExpiryIsRejectedAndNeverSaved() throws Exception {
+        var fixture = pendingOcrFixture();
+        org.mockito.Mockito.when(openAiOcr.extract(org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+                    makeFilePurgeDue(fixture.fileId());
+                    fileCleanupService.cleanup();
+                    return ocrAnswer();
+                });
+        startOcr(fixture, UUID.randomUUID()).andExpect(status().isConflict());
+        ocrView(fixture).andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.rawText").doesNotExist());
+        assertPurgeState(fixture.fileId(), "purged", 1);
+    }
+
+    @Test
+    void ocrMissingConfigurationAndExpiredOriginalDoNotSendFiles() throws Exception {
+        var fixture = pendingOcrFixture();
+        ocrView(fixture).andExpect(status().isConflict());
+        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.INTEGRATION_NOT_CONFIGURED))
+                .when(openAiOcr).requireConfigured();
+        startOcr(fixture, UUID.randomUUID()).andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("COMMON_002"));
+        ocrView(fixture).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("OCR_001"));
+        org.mockito.Mockito.doNothing().when(openAiOcr).requireConfigured();
+        makeFilePurgeDue(fixture.fileId());
+        startOcr(fixture, UUID.randomUUID()).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("OCR_005"));
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.never())
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    private void ocrUpdate(String sql, Object... params) throws SQLException {
+        try (var connection = adminConnection(); var statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < params.length; i++) statement.setObject(i + 1, params[i]);
+            statement.executeUpdate();
+        }
+    }
+
+    private record OcrFixture(AuthTokenResponse owner, UUID caseId, UUID fileId, UUID extractionId) {}
+
+    private kr.co.legalai.file.entity.OcrText ocrAnswer() {
+        return kr.co.legalai.file.entity.OcrText.builder().text("기계가 읽은 계약 내용")
+                .model("ocr-test").responseId("ocr-response").inputTokens(100).outputTokens(20).build();
+    }
+
+    private OcrFixture pendingOcrFixture() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID fileId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "계약.png", "image/png", testPng()));
+        org.mockito.Mockito.when(openAiOcr.model()).thenReturn("ocr-test");
+        org.mockito.Mockito.when(openAiOcr.extract(org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+                    assertEquals(1, jdbcTemplate.queryForObject("SELECT 1", Integer.class));
+                    return ocrAnswer();
+                });
+        return new OcrFixture(owner, caseId, fileId, null);
+    }
+
+    private OcrFixture ocrFixture() throws Exception {
+        var fixture = pendingOcrFixture();
+        UUID key = UUID.randomUUID();
+        String result = startOcr(fixture, key)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        startOcr(fixture, key).andExpect(status().isOk());
+        return new OcrFixture(fixture.owner(), fixture.caseId(), fixture.fileId(),
+                UUID.fromString(objectMapper.readTree(result).path("data").path("extractionId").asString()));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions startOcr(OcrFixture fixture, UUID key) throws Exception {
+        return mockMvc.perform(post(ocrPath(fixture)).header("Idempotency-Key", key)
+                .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"externalOcrAccepted\":true}"));
+    }
+
+    private String ocrPath(OcrFixture fixture) {
+        return "/api/v1/cases/" + fixture.caseId() + "/files/" + fixture.fileId() + "/ocr";
+    }
+
+    private org.springframework.test.web.servlet.ResultActions ocrView(OcrFixture fixture) throws Exception {
+        return mockMvc.perform(get(ocrPath(fixture))
+                .header("Authorization", "Bearer " + fixture.owner().accessToken()));
+    }
+
+    private UUID saveOcr(OcrFixture fixture, int version, String text) throws Exception {
+        String response = mockMvc.perform(post(ocrPath(fixture) + "-revisions")
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("extractionId", fixture.extractionId(),
+                                        "expectedRevision", version, "correctedText", text))))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        return UUID.fromString(objectMapper.readTree(response).path("data").path("id").asString());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions confirmOcr(OcrFixture fixture, UUID revision) throws Exception {
+        return mockMvc.perform(post("/api/v1/cases/{caseId}/files/{fileId}/confirm", fixture.caseId(), fixture.fileId())
+                .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                        java.util.Map.of("revisionId", revision, "sensitiveDataReviewed", true))));
     }
 
     private static KeyPair generateRsaKeyPair() {
