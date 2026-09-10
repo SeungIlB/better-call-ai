@@ -43,7 +43,7 @@ class OpenAiOcrRepositoryTest {
 
     private OpenAiOcrRepository client(String key, String model) {
         return new OpenAiOcrRepository(mapper, "http://127.0.0.1:" + server.getAddress().getPort(),
-                key, model, Duration.ofSeconds(2));
+                key, model, Duration.ofSeconds(2), "");
     }
 
     private String success(String text) {
@@ -63,6 +63,7 @@ class OpenAiOcrRepositoryTest {
             JsonNode request = sent.get();
             assertFalse(request.path("store").asBoolean());
             assertFalse(request.path("stream").asBoolean());
+            assertTrue(request.path("reasoning").isMissingNode());
             assertEquals(16000, request.path("max_output_tokens").asInt());
             assertTrue(request.path("instructions").asString().contains("전사"));
             JsonNode attachment = request.path("input").get(0).path("content").get(1);
@@ -139,8 +140,33 @@ class OpenAiOcrRepositoryTest {
             }
         });
         var shortClient = new OpenAiOcrRepository(mapper, "http://127.0.0.1:" + server.getAddress().getPort(),
-                "test-key", "vision-test", Duration.ofMillis(200));
+                "test-key", "vision-test", Duration.ofMillis(200), "");
         assertTimeoutPreemptively(Duration.ofSeconds(2), () -> assertEquals(ErrorCode.OCR_UNAVAILABLE,
                 assertThrows(BusinessException.class, () -> shortClient.extract(new byte[]{1}, "image/png")).getErrorCode()));
+    }
+
+    @Test
+    void reasoningEffortIsExplicitAndInvalidConfigurationDoesNotCallProvider() {
+        var enabled = new OpenAiOcrRepository(mapper, "http://127.0.0.1:" + server.getAddress().getPort(),
+                "test-key", "vision-test", Duration.ofSeconds(2), "none");
+        enabled.extract(new byte[]{1}, "image/png");
+        assertEquals("none", sent.get().path("reasoning").path("effort").asString());
+        var invalid = new OpenAiOcrRepository(mapper, "http://127.0.0.1:" + server.getAddress().getPort(),
+                "test-key", "vision-test", Duration.ofSeconds(2), "unexpected");
+        assertEquals(ErrorCode.INTEGRATION_NOT_CONFIGURED,
+                assertThrows(BusinessException.class, () -> invalid.extract(new byte[]{1}, "image/png")).getErrorCode());
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void extendedTimeoutStaysBelowReservationExpiry() {
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        assertDoesNotThrow(() -> new OpenAiOcrRepository(mapper, baseUrl, "test-key", "vision-test",
+                Duration.ofSeconds(150), "none"));
+        assertThrows(IllegalArgumentException.class, () -> new OpenAiOcrRepository(mapper, baseUrl,
+                "test-key", "vision-test", Duration.ofSeconds(151), "none"));
+        assertThrows(IllegalArgumentException.class, () -> new OpenAiOcrRepository(mapper, baseUrl,
+                "test-key", "vision-test", Duration.ofMillis(99), ""));
+        assertEquals(0, calls.get());
     }
 }

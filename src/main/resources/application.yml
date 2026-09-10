@@ -75,6 +75,8 @@ integrations:
     api-key: ${OPENAI_API_KEY:}
     chat-model: ${OPENAI_CHAT_MODEL:}
     ocr-model: ${OPENAI_OCR_MODEL:${OPENAI_CHAT_MODEL:}}
+    ocr-reasoning-effort: ${OPENAI_OCR_REASONING_EFFORT:}
+    ocr-timeout: ${OPENAI_OCR_TIMEOUT_SECONDS:90}s
   clamav:
     host: ${CLAMAV_HOST:127.0.0.1}
     port: ${CLAMAV_PORT:3310}

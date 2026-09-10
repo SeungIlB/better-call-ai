@@ -3,6 +3,7 @@ package kr.co.legalai.file.repository;
 import kr.co.legalai.common.exception.BusinessException;
 import kr.co.legalai.common.exception.ErrorCode;
 import kr.co.legalai.file.entity.OcrText;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.JsonNode;
@@ -16,6 +17,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 @Repository
+@Slf4j
 public class OpenAiOcrRepository {
     private static final String INSTRUCTIONS = """
             첨부 파일에서 눈으로 확인 가능한 텍스트만 원문 순서대로 전사한다. 요약하거나 법률 판단하지 않는다.
@@ -30,19 +32,22 @@ public class OpenAiOcrRepository {
     private final String apiKey;
     private final String model;
     private final Duration timeout;
+    private final String reasoningEffort;
 
     public OpenAiOcrRepository(ObjectMapper mapper,
             @Value("${integrations.openai.base-url:https://api.openai.com/v1}") String baseUrl,
             @Value("${integrations.openai.api-key:}") String apiKey,
             @Value("${integrations.openai.ocr-model:}") String model,
-            @Value("${integrations.openai.ocr-timeout:90s}") Duration timeout) {
-        if (timeout.toMillis() < 100 || timeout.compareTo(Duration.ofSeconds(90)) > 0) {
-            throw new IllegalArgumentException("OCR timeout must be between 100ms and 90s");
+            @Value("${integrations.openai.ocr-timeout:90s}") Duration timeout,
+            @Value("${integrations.openai.ocr-reasoning-effort:}") String reasoningEffort) {
+        if (timeout.toMillis() < 100 || timeout.compareTo(Duration.ofSeconds(150)) > 0) {
+            throw new IllegalArgumentException("OCR timeout must be between 100ms and 150s");
         }
         this.mapper = mapper;
         this.apiKey = apiKey;
         this.model = model;
         this.timeout = timeout;
+        this.reasoningEffort = reasoningEffort;
         this.endpoint = URI.create(baseUrl + "/responses");
         this.client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
@@ -50,6 +55,9 @@ public class OpenAiOcrRepository {
 
     public void requireConfigured() {
         if (apiKey == null || apiKey.isBlank() || model == null || model.isBlank() || model.length() > 100) {
+            throw new BusinessException(ErrorCode.INTEGRATION_NOT_CONFIGURED);
+        }
+        if (!Set.of("", "none", "low", "medium", "high", "xhigh", "max").contains(reasoningEffort)) {
             throw new BusinessException(ErrorCode.INTEGRATION_NOT_CONFIGURED);
         }
     }
@@ -67,12 +75,14 @@ public class OpenAiOcrRepository {
             Map<String, String> attachment = mime.equals("application/pdf")
                     ? Map.of("type", "input_file", "filename", "document.pdf", "file_data", data)
                     : Map.of("type", "input_image", "image_url", data, "detail", "high");
-            String body = mapper.writeValueAsString(Map.of(
+            Map<String, Object> payload = new HashMap<>(Map.of(
                     "model", model, "instructions", INSTRUCTIONS, "store", false, "stream", false,
                     "max_output_tokens", 16000,
                     "input", List.of(Map.of("role", "user", "content", List.of(
                             Map.of("type", "input_text", "text", "첨부 파일의 모든 텍스트를 원문 그대로 전사해 주세요."),
                             attachment)))));
+            if (!reasoningEffort.isEmpty()) payload.put("reasoning", Map.of("effort", reasoningEffort));
+            String body = mapper.writeValueAsString(payload);
             HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(timeout)
                     .header("Authorization", "Bearer " + apiKey).header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
@@ -84,10 +94,14 @@ public class OpenAiOcrRepository {
                 pending.cancel(true);
             }
             if (response.statusCode() == 200) return parse(response.body());
+            log.warn("OpenAI OCR 응답 실패. status={}", response.statusCode());
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
+        } catch (TimeoutException failure) {
+            log.warn("OpenAI OCR 응답 대기 시간 초과");
         } catch (Exception failure) {
             // 원본, 공급자 응답 본문, API 키를 예외나 로그로 전달하지 않는다. 자동 재호출은 하지 않는다.
+            log.warn("OpenAI OCR 처리 실패. type={}", failure.getClass().getSimpleName());
         }
         throw invalid();
     }

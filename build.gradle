@@ -51,6 +51,17 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
+// 일반 test에서는 실행되지 않는 명시적 실제 API 평가. 가상 문서와 고정된 공개 양식만 전송한다.
+tasks.register('evaluateOcr', JavaExec) {
+    group = 'verification'
+    description = '가상 한글 문서의 OCR 정확도 평가 (prepare는 외부 호출 없음)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'kr.co.legalai.file.OcrAccuracyEvaluation'
+    systemProperty 'stdout.encoding', 'UTF-8'
+    systemProperty 'stderr.encoding', 'UTF-8'
+    systemProperty 'java.awt.headless', 'true'
+}
+
 tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-Xlint:deprecation']
 }

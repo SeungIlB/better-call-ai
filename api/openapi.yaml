@@ -376,7 +376,7 @@ paths:
     post:
       operationId: extractOcr
       summary: OpenAI로 임시 원본 OCR 실행
-      description: 동의 후 동기 실행. 동일 키 성공 결과는 재사용한다. 실패는 자동 재호출하지 않으며 새 키로 명시적으로 재시도한다. 원본 만료 후 실행 불가. 원본당 한 번의 성공 결과를 허용한다.
+      description: 동의 후 동기 실행. 외부 응답 대기는 기본 90초이며 서버 설정에 따라 최대 150초. 동일 키 성공 결과는 재사용한다. 실패는 자동 재호출하지 않으며 새 키로 명시적으로 재시도한다. 원본 만료 후 실행 불가. 원본당 한 번의 성공 결과를 허용한다.
       parameters:
         - name: Idempotency-Key
           in: header
