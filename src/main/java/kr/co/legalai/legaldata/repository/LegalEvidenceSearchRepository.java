@@ -15,6 +15,10 @@ public class LegalEvidenceSearchRepository {
     private final JdbcTemplate jdbc;
 
     public List<LegalEvidenceResponse> search(String query, float[] vector) {
+        return search(query, vector, "housing_lease");
+    }
+
+    public List<LegalEvidenceResponse> search(String query, float[] vector, String disputeDomain) {
         String literal = vectorLiteral(vector);
         // 양쪽 상위 20개 순위를 RRF(k=60)로 합친다. 점수는 법률적 신뢰도가 아니다.
         return jdbc.query("""
@@ -34,7 +38,7 @@ public class LegalEvidenceSearchRepository {
                       AND (d.effective_to IS NULL OR d.effective_to >= CURRENT_DATE)
                       AND d.source_url ~ '^https://www[.]law[.]go[.]kr/LSW/lsInfoP[.]do[?]'
                       AND c.chunk_type='article'
-                      AND (c.metadata->'topic_tags') @> '["housing_lease"]'::jsonb
+                      AND (c.metadata->'topic_tags') @> jsonb_build_array(?::text)
                       AND c.metadata->>'deleted'='false'
                       AND c.metadata->>'effective_from' <= to_char(CURRENT_DATE, 'YYYY-MM-DD')
                       AND e.embedding_model=? AND e.content_hash=c.metadata->>'content_hash'
@@ -58,7 +62,7 @@ public class LegalEvidenceSearchRepository {
                 .title(rs.getString("title")).heading(rs.getString("heading")).content(rs.getString("content"))
                 .sourceUrl(rs.getString("source_url")).versionLabel(rs.getString("version_label"))
                 .effectiveFrom(rs.getObject("effective_from", LocalDate.class)).rankScore(rs.getDouble("score")).build(),
-                literal, query, EmbeddingRepository.MODEL);
+                literal, query, disputeDomain, EmbeddingRepository.MODEL);
     }
 
     private String vectorLiteral(float[] vector) {

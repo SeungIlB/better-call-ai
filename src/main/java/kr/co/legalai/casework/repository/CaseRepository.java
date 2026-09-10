@@ -63,6 +63,11 @@ public class CaseRepository {
         ).stream().findFirst();
     }
 
+    public Optional<String> findDomain(UUID caseId) {
+        return jdbcTemplate.query("SELECT dispute_domain FROM casework.cases WHERE id = ? AND deleted_at IS NULL",
+                (result, rowNumber) -> result.getString(1), caseId).stream().findFirst();
+    }
+
     public List<CaseSummaryResponse> findPage(UUID ownerUserId, int page, int pageSize) {
         return jdbcTemplate.query("""
                 SELECT id, title, dispute_domain, status, user_party_role, version_no, created_at, updated_at

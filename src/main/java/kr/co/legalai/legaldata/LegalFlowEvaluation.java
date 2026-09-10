@@ -5,6 +5,7 @@ import kr.co.legalai.common.exception.BusinessException;
 import kr.co.legalai.common.security.AuthenticatedUser;
 import kr.co.legalai.common.transaction.UserScopedTransaction;
 import kr.co.legalai.file.repository.ConfirmedEvidenceRepository;
+import kr.co.legalai.casework.repository.CaseRepository;
 import kr.co.legalai.legaldata.dto.request.CaseEvidenceSearchRequest;
 import kr.co.legalai.legaldata.repository.EmbeddingRepository;
 import kr.co.legalai.legaldata.repository.GroundedAnswerRepository;
@@ -87,7 +88,7 @@ public final class LegalFlowEvaluation {
         var evidence = new ConfirmedEvidenceRepository(jdbc);
         var embeddings = new EmbeddingRepository(mapper, required(config, "OPENAI_API_KEY"), "https://api.openai.com/v1");
         var search = new LegalEvidenceSearchServiceImpl(user, tx, embeddings, new LegalEvidenceSearchRepository(jdbc));
-        var caseSearch = new CaseEvidenceSearchServiceImpl(tx, evidence, search);
+        var caseSearch = new CaseEvidenceSearchServiceImpl(tx, evidence, new CaseRepository(jdbc), search);
         String model = config.getOrDefault("DRAFT_EVAL_MODEL", "gpt-5.6-sol");
         String effort = config.getOrDefault("DRAFT_EVAL_REASONING", "none");
         int budget = Integer.parseInt(config.getOrDefault("DRAFT_EVAL_OUTPUT_TOKENS", "1200"));

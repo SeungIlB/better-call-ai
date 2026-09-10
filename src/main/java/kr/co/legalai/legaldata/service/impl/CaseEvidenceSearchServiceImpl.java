@@ -10,6 +10,7 @@ import kr.co.legalai.legaldata.dto.response.CaseEvidenceSearchResponse;
 import kr.co.legalai.legaldata.dto.response.EvidenceExcerptResponse;
 import kr.co.legalai.legaldata.service.CaseEvidenceSearchService;
 import kr.co.legalai.legaldata.service.LegalEvidenceSearchService;
+import kr.co.legalai.casework.repository.CaseRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import java.util.UUID;
 public class CaseEvidenceSearchServiceImpl implements CaseEvidenceSearchService {
     private final UserScopedTransaction transactions;
     private final ConfirmedEvidenceRepository evidence;
+    private final CaseRepository cases;
     private final LegalEvidenceSearchService search;
 
     @Override
@@ -37,8 +39,10 @@ public class CaseEvidenceSearchServiceImpl implements CaseEvidenceSearchService 
                 return excerpt(current, request.excerptStart() == null ? 0 : request.excerptStart());
             });
             // 소유권 확인 트랜잭션 종료 후 외부 호출. 원본 파일·미확정 초안은 읽지 않는다.
-            var results = search.search(request.query().strip() + "\n확정 문서 발췌:\n" + excerpt.text()
-                    + "\n사진 관찰 JSON:\n" + (excerpt.visionJson() == null ? "{}" : excerpt.visionJson()));
+            String domain = transactions.execute(userId -> cases.findDomain(caseId).orElse("housing_lease"));
+            String searchInput = request.query().strip() + "\n확정 문서 발췌:\n" + excerpt.text()
+                    + "\n사진 관찰 JSON:\n" + (excerpt.visionJson() == null ? "{}" : excerpt.visionJson());
+            var results = "housing_lease".equals(domain) ? search.search(searchInput) : search.search(searchInput, domain);
             transactions.execute(userId -> {
                 checkVersion(caseId, request.expectedCaseVersion());
                 var current = evidence.findCurrent(caseId, fileId);

@@ -26,6 +26,11 @@ public class LegalEvidenceSearchServiceImpl implements LegalEvidenceSearchServic
 
     @Override
     public PageResponse<LegalEvidenceResponse> search(String query) {
+        return search(query, "housing_lease");
+    }
+
+    @Override
+    public PageResponse<LegalEvidenceResponse> search(String query, String disputeDomain) {
         if (query == null || query.isBlank() || query.length() > 1000) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
@@ -34,9 +39,10 @@ public class LegalEvidenceSearchServiceImpl implements LegalEvidenceSearchServic
         if (!slots.tryAcquire()) throw new BusinessException(ErrorCode.LEGAL_SEARCH_BUSY);
         try {
             // 외부 호출 중 DB 트랜잭션·연결을 점유하지 않는다.
-            String searchQuery = HousingSearchTerms.expand(query);
+            String searchQuery = "housing_lease".equals(disputeDomain) ? HousingSearchTerms.expand(query) : query.strip();
             float[] vector = embeddings.embed(List.of(searchQuery)).getFirst();
-            var matches = transactions.execute(id -> repository.search(searchQuery, vector));
+            var matches = transactions.execute(id -> "housing_lease".equals(disputeDomain)
+                    ? repository.search(searchQuery, vector) : repository.search(searchQuery, vector, disputeDomain));
             return new PageResponse<>(matches, 1, 8, false);
         } catch (RuntimeException failure) {
             // JDBC 오류에도 검색어가 포함될 수 있으므로 원문·cause를 전역 로그로 전달하지 않는다.
