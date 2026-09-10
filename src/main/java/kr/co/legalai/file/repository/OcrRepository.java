@@ -149,12 +149,14 @@ public class OcrRepository {
                 """, REVISION, fileId, size + 1, ((long) page - 1) * size);
     }
 
-    public void confirm(UUID caseId, OcrFile file, UUID revisionId) {
+    public void confirm(UUID caseId, OcrFile file, UUID revisionId, java.util.List<String> observations, java.util.List<String> unknowns) {
         jdbc.update("UPDATE casework.ocr_text_revisions SET is_current = false WHERE file_id = ? AND is_current", file.id());
         jdbc.update("""
                 UPDATE casework.ocr_text_revisions SET is_current = true, confirmed_at = clock_timestamp()
                 WHERE file_id = ? AND id = ?
                 """, file.id(), revisionId);
+        jdbc.update("UPDATE casework.file_extractions SET vision_json = ?::jsonb WHERE id = ?",
+                visionJson(observations, unknowns), file.extractionId());
         // 보관 기한을 지금으로 앞당겨, 커밋 직후 프로세스가 종료돼도 기존 정리 작업이 원본을 회수한다.
         jdbc.update("""
                 UPDATE casework.files SET current_ocr_revision_id = ?, pii_status = 'reviewed',
@@ -176,6 +178,15 @@ public class OcrRepository {
                 VALUES ('OCR_CONFIRMED', 'file', ?, jsonb_build_object('caseId', ?::text, 'revisionId', ?::text),
                     ?, now() + interval '30 days')
                 """, file.id(), caseId, revisionId, "ocr-confirmed:" + revisionId);
+    }
+
+    private String visionJson(java.util.List<String> observations, java.util.List<String> unknowns) {
+        try {
+            return mapper.writeValueAsString(java.util.Map.of("observations", observations == null ? java.util.List.of() : observations,
+                    "unknowns", unknowns == null ? java.util.List.of() : unknowns));
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException("사진 관찰 결과를 저장할 수 없습니다.", failure);
+        }
     }
 
     public boolean purgeDue(UUID fileId) {

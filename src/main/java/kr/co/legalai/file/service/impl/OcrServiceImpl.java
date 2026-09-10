@@ -127,7 +127,7 @@ public class OcrServiceImpl implements OcrService {
             if (!repository.latest(fileId).map(OcrRevisionResponse::id).orElseThrow().equals(revision.id())) {
                 throw error(ErrorCode.OCR_CONFLICT);
             }
-            repository.confirm(caseId, file, revision.id());
+            repository.confirm(caseId, file, revision.id(), request.observations(), request.unknowns());
             return new Confirmation(repository.revision(fileId, revision.id()).orElseThrow(), repository.purgeDue(fileId));
         });
         if (result.purge()) {
