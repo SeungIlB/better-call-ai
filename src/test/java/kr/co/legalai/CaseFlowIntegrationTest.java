@@ -70,6 +70,92 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class CaseFlowIntegrationTest {
+    @Test
+    void savedAnalysisReplaysAndBecomesStaleAfterCaseAndOcrChanges() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "확정한 집 수리 자료")).andExpect(status().isOk());
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of(vector));
+        UUID key = UUID.randomUUID();
+        var first = savedAnalysis(fixture, key, 2).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("succeeded"))
+                .andExpect(jsonPath("$.data.stale").value(false))
+                .andExpect(jsonPath("$.data.result.status").value("INSUFFICIENT_EVIDENCE"))
+                .andReturn();
+        String id = objectMapper.readTree(first.getResponse().getContentAsString()).path("data").path("id").asString();
+        savedAnalysis(fixture, key, 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(id));
+        org.mockito.Mockito.verify(searchEmbeddings, org.mockito.Mockito.times(1)).embed(org.mockito.ArgumentMatchers.anyList());
+        savedAnalysis(fixture, key, 3).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ANALYSIS_002"));
+        String path = "/api/v1/cases/" + fixture.caseId() + "/analyses";
+        mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
+        var other = registerTestUser();
+        mockMvc.perform(get(path + "/" + id).header("Authorization", "Bearer " + other.accessToken())).andExpect(status().isNotFound());
+        mockMvc.perform(get(path).param("pageSize", "21").header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/v1/cases/" + fixture.caseId()).header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"originalStatement\":\"수선 비용을 추가 확인했습니다.\",\"expectedVersion\":2}"))
+                .andExpect(status().isOk());
+        savedAnalysis(fixture, key, 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.stale").value(true));
+        var second = savedAnalysis(fixture, UUID.randomUUID(), 3).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.version").value(2)).andReturn();
+        String secondId = objectMapper.readTree(second.getResponse().getContentAsString()).path("data").path("id").asString();
+        confirmOcr(fixture, saveOcr(fixture, 1, "수정 확정한 문서")).andExpect(status().isOk());
+        mockMvc.perform(get(path + "/" + secondId).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.stale").value(true))
+                .andExpect(jsonPath("$.data.staleReason").value("ocr_changed"));
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(2));
+        mockMvc.perform(delete("/api/v1/cases/" + fixture.caseId()).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get(path + "/" + id).header("Authorization", "Bearer " + fixture.owner().accessToken())).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void savedAnalysisFailureIsRecordedAndExpiredReservationCanBeReplaced() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "확정 자료")).andExpect(status().isOk());
+        UUID key = UUID.randomUUID();
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenThrow(new IllegalStateException("test failure"));
+        savedAnalysis(fixture, key, 2).andExpect(status().isServiceUnavailable());
+        var replay = savedAnalysis(fixture, key, 2).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.errorCode").value("LEGAL_DATA_002")).andReturn();
+        org.mockito.Mockito.verify(searchEmbeddings, org.mockito.Mockito.times(1)).embed(org.mockito.ArgumentMatchers.anyList());
+        UUID id = UUID.fromString(objectMapper.readTree(replay.getResponse().getContentAsString()).path("data").path("id").asString());
+        ocrUpdate("UPDATE aiops.analysis_runs SET status='running',started_at=now() WHERE id=?", id);
+        savedAnalysis(fixture, key, 2).andExpect(status().isAccepted());
+        savedAnalysis(fixture, UUID.randomUUID(), 2).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ANALYSIS_003"));
+        ocrUpdate("UPDATE aiops.analysis_runs SET started_at=now()-interval '6 minutes' WHERE id=?", id);
+        savedAnalysis(fixture, key, 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.errorCode").value("ANALYSIS_004"));
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.doReturn(List.of(vector)).when(searchEmbeddings).embed(org.mockito.ArgumentMatchers.anyList());
+        savedAnalysis(fixture, UUID.randomUUID(), 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value(2));
+    }
+
+    @Test
+    void savedAnalysisDoesNotPersistResultAfterInputChangesDuringGeneration() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "수리 확인 자료")).andExpect(status().isOk());
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            ocrUpdate("UPDATE casework.cases SET version_no=version_no+1 WHERE id=?", fixture.caseId());
+            return List.of(vector);
+        });
+        UUID key = UUID.randomUUID();
+        savedAnalysis(fixture, key, 2).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CASE_002"));
+        savedAnalysis(fixture, key, 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.stale").value(true)).andExpect(jsonPath("$.data.result").doesNotExist());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions savedAnalysis(OcrFixture fixture, UUID key, int version) throws Exception {
+        return mockMvc.perform(post("/api/v1/cases/" + fixture.caseId() + "/analyses")
+                .header("Authorization", "Bearer " + fixture.owner().accessToken()).header("Idempotency-Key", key.toString())
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(java.util.Map.of(
+                        "fileId", fixture.fileId(), "query", "집 수선의 근거를 확인해 주세요.", "expectedCaseVersion", version))));
+    }
+
     @MockitoBean
     private kr.co.legalai.legaldata.repository.EmbeddingRepository searchEmbeddings;
 
