@@ -55,7 +55,7 @@ class OpenAiChatRepositoryTest {
 
     private OpenAiChatRepository repository(String key) {
         return new OpenAiChatRepository(mapper, "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
-                key, "test-model", Duration.ofSeconds(2));
+                key, "test-model", Duration.ofSeconds(2), "", 1200);
     }
 
     @Test
@@ -67,6 +67,7 @@ class OpenAiChatRepositoryTest {
         assertFalse(sent.get().path("store").asBoolean());
         assertFalse(sent.get().path("stream").asBoolean());
         assertEquals(1200, sent.get().path("max_output_tokens").asInt());
+        assertFalse(sent.get().has("reasoning"));
         String instructions = sent.get().path("instructions").asString();
         assertTrue(instructions.contains("600자 이내"));
         assertTrue(instructions.contains("이미 답한 질문은 반복하지 않는다"));
@@ -74,6 +75,32 @@ class OpenAiChatRepositoryTest {
         assertEquals("user", sent.get().path("input").get(0).path("role").asString());
         assertTrue(sent.get().path("instructions").asString().contains("법령·조문·사건번호·출처 링크를 생성하지 않는다"));
         assertFalse(sent.get().has("tools"));
+    }
+
+    @Test
+    void sendsExplicitReasoningAndBudgetWithoutChangingInput() {
+        var repository = configured("low", 4000);
+        var input = List.of(new ChatInput("user", "보증금을 아직 못 받았습니다."));
+        repository.generate(input);
+        assertEquals("low", sent.get().path("reasoning").path("effort").asString());
+        assertEquals(4000, sent.get().path("max_output_tokens").asInt());
+        assertEquals(input.getFirst().content(), sent.get().path("input").get(0).path("content").asString());
+        assertFalse(sent.get().has("temperature"));
+    }
+
+    @Test
+    void invalidConfigurationIsRejectedBeforeNetworkCall() {
+        assertThrows(IllegalArgumentException.class, () -> configured("automatic", 1200));
+        assertThrows(IllegalArgumentException.class, () -> configured("low", 1199));
+        assertThrows(IllegalArgumentException.class, () -> configured("low", 16001));
+        assertNotNull(configured("none", 1200));
+        assertNotNull(configured("medium", 16000));
+        assertEquals(0, calls.get());
+    }
+
+    private OpenAiChatRepository configured(String effort, int budget) {
+        return new OpenAiChatRepository(mapper, "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                "test-key", "test-model", Duration.ofSeconds(2), effort, budget);
     }
 
     @Test

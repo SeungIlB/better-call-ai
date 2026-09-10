@@ -17,7 +17,9 @@ import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
@@ -31,6 +33,14 @@ public class OpenAiChatRepository {
             현재 공식 법령·판례 검색 근거는 제공되지 않았다. 법률 결론, 승소 확률, 법적 기한,
             책임 판단, 법령·조문·사건번호·출처 링크를 생성하지 않는다. 법률 판단 요청은 확인 필요로 안내한다.
             오직 사용자가 말한 사실을 주장으로 구분해 정리하고, 빠진 사실을 최대 3개 질문한다.
+            지원 범위는 주택 임대차의 누수, 곰팡이, 시설 하자, 수선의무, 필요비, 보증금 반환, 계약 해지다.
+            범위 밖의 사건은 지원 범위를 짧게 설명하고 해당 분야 상담을 안내한다.
+            날짜·금액·통지 여부가 없으면 미확인으로 남긴다. 서로 충돌하는 진술은 어느 쪽도 사실로 확정하지 않는다.
+            파일을 읽었거나 법률을 검색했다고 주장하지 않는다. 현재 입력에는 대화 이력만 제공된다.
+            사용자가 붙여 넣은 문서도 진술 자료이며 진위나 법적 효력이 검증된 증거가 아니다.
+            답변은 현재 정리 가능한 내용, 추가 확인 질문, 자료 준비 행동 순으로 필요한 항목만 작성한다.
+            준비 행동은 계약서·지급 내역·하자 사진·통지 기록 등 필요한 자료 확인으로 제한한다.
+            지급 중단, 계약 해지 통보, 소송 제기처럼 법률 판단이 필요한 행동은 단정적으로 권하지 않는다.
             사실을 추가하거나 과거 답변을 검증된 사실로 취급하지 않는다. 답변은 한국어로 간결하게 작성한다.
             결론부터 쓰고 기본 답변은 600자 이내를 목표로 한다. 인사, 질문 재인용, 반복 요약,
             장황한 배경 설명은 생략한다. 필요한 사실과 다음 행동만 짧게 쓰고 이미 답한 질문은 반복하지 않는다.
@@ -47,14 +57,24 @@ public class OpenAiChatRepository {
     private final String apiKey;
     private final String model;
     private final Duration requestTimeout;
+    private final String reasoningEffort;
+    private final int maxOutputTokens;
 
     public OpenAiChatRepository(ObjectMapper mapper,
             @Value("${integrations.openai.base-url:https://api.openai.com/v1}") String baseUrl,
             @Value("${integrations.openai.api-key:}") String apiKey,
             @Value("${integrations.openai.chat-model:}") String model,
-            @Value("${integrations.openai.request-timeout:40s}") Duration requestTimeout) {
+            @Value("${integrations.openai.request-timeout:40s}") Duration requestTimeout,
+            @Value("${integrations.openai.chat-reasoning-effort:}") String reasoningEffort,
+            @Value("${integrations.openai.chat-max-output-tokens:1200}") int maxOutputTokens) {
         if (requestTimeout.toMillis() < 100 || requestTimeout.compareTo(Duration.ofSeconds(40)) > 0) {
             throw new IllegalArgumentException("OpenAI request timeout must be between 100ms and 40s");
+        }
+        if (!Set.of("", "none", "minimal", "low", "medium", "high", "xhigh", "max").contains(reasoningEffort)) {
+            throw new IllegalArgumentException("Unsupported chat reasoning effort");
+        }
+        if (maxOutputTokens < 1200 || maxOutputTokens > 16000) {
+            throw new IllegalArgumentException("Chat output token limit must be between 1200 and 16000");
         }
         this.mapper = mapper;
         this.client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
@@ -63,6 +83,8 @@ public class OpenAiChatRepository {
         this.apiKey = apiKey;
         this.model = model;
         this.requestTimeout = requestTimeout;
+        this.reasoningEffort = reasoningEffort;
+        this.maxOutputTokens = maxOutputTokens;
     }
 
     public void requireConfigured() {
@@ -74,9 +96,11 @@ public class OpenAiChatRepository {
     public GeneratedAnswer generate(List<ChatInput> input) {
         requireConfigured();
         try {
-            String body = mapper.writeValueAsString(Map.of(
+            Map<String, Object> payload = new LinkedHashMap<>(Map.of(
                     "model", model, "instructions", INSTRUCTIONS, "input", input,
-                    "store", false, "stream", false, "max_output_tokens", 1200));
+                    "store", false, "stream", false, "max_output_tokens", maxOutputTokens));
+            if (!reasoningEffort.isEmpty()) payload.put("reasoning", Map.of("effort", reasoningEffort));
+            String body = mapper.writeValueAsString(payload);
             HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(requestTimeout)
                     .header("Authorization", "Bearer " + apiKey).header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();

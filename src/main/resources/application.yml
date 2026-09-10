@@ -74,6 +74,8 @@ integrations:
   openai:
     api-key: ${OPENAI_API_KEY:}
     chat-model: ${OPENAI_CHAT_MODEL:}
+    chat-reasoning-effort: ${OPENAI_CHAT_REASONING_EFFORT:}
+    chat-max-output-tokens: ${OPENAI_CHAT_MAX_OUTPUT_TOKENS:1200}
     ocr-model: ${OPENAI_OCR_MODEL:${OPENAI_CHAT_MODEL:}}
     ocr-reasoning-effort: ${OPENAI_OCR_REASONING_EFFORT:}
     ocr-timeout: ${OPENAI_OCR_TIMEOUT_SECONDS:90}s
