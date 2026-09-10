@@ -34,8 +34,9 @@ public class LegalEvidenceSearchServiceImpl implements LegalEvidenceSearchServic
         if (!slots.tryAcquire()) throw new BusinessException(ErrorCode.LEGAL_SEARCH_BUSY);
         try {
             // 외부 호출 중 DB 트랜잭션·연결을 점유하지 않는다.
-            float[] vector = embeddings.embed(List.of(query.strip())).getFirst();
-            var matches = transactions.execute(id -> repository.search(query.strip(), vector));
+            String searchQuery = HousingSearchTerms.expand(query);
+            float[] vector = embeddings.embed(List.of(searchQuery)).getFirst();
+            var matches = transactions.execute(id -> repository.search(searchQuery, vector));
             return new PageResponse<>(matches, 1, 8, false);
         } catch (RuntimeException failure) {
             // JDBC 오류에도 검색어가 포함될 수 있으므로 원문·cause를 전역 로그로 전달하지 않는다.

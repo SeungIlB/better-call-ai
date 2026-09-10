@@ -33,8 +33,8 @@ public class LegalDataImportCommand {
     }
 
     private static void run(String[] args) throws Exception {
-        if (args.length != 1 || !List.of("collect", "embed", "verify", "search-check").contains(args[0])) {
-            throw new IllegalStateException("USE_COLLECT_EMBED_VERIFY_OR_SEARCH_CHECK");
+        if (args.length != 1 || !List.of("collect", "embed", "verify", "search-check", "search-evaluate").contains(args[0])) {
+            throw new IllegalStateException("USE_COLLECT_EMBED_VERIFY_SEARCH_CHECK_OR_SEARCH_EVALUATE");
         }
         Map<String, String> config = new HashMap<>();
         for (String line : Files.readAllLines(Path.of(".env"))) {
@@ -52,7 +52,7 @@ public class LegalDataImportCommand {
         var dataSource = new DriverManagerDataSource(url, required(config, "DATABASE_MIGRATION_USER"),
                 required(config, "DATABASE_MIGRATION_PASSWORD"));
         if (args[0].equals("collect")) required(config, "LAW_OPEN_DATA_OC");
-        if (args[0].equals("embed") || args[0].equals("search-check")) required(config, "OPENAI_API_KEY");
+        if (List.of("embed", "search-check", "search-evaluate").contains(args[0])) required(config, "OPENAI_API_KEY");
         // 별도 세션 잠금으로 동시 운영 명령의 중복 생성·과금을 방지한다. 사용자 요청용 풀과 무관하다.
         try (var lock = dataSource.getConnection(); var statement = lock.createStatement()) {
             try (var row = statement.executeQuery("SELECT pg_try_advisory_lock(732019)")) {
@@ -70,12 +70,14 @@ public class LegalDataImportCommand {
             switch (args[0]) {
                 case "collect" -> service.collect();
                 case "embed" -> service.embed();
+                case "search-evaluate" -> LegalSearchEvaluation.run(new JdbcTemplate(dataSource), embeddings, mapper);
                 case "search-check" -> {
                     String query = "임대인이 집 수리를 해주지 않아 제가 수리비를 냈습니다. 돌려받을 수 있나요?";
-                    var vector = embeddings.embed(List.of(query));
+                    String expanded = kr.co.legalai.legaldata.service.impl.HousingSearchTerms.expand(query);
+                    var vector = embeddings.embed(List.of(query, expanded));
                     repository.search(vector.getFirst()).forEach(System.out::println);
                     new kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository(new JdbcTemplate(dataSource))
-                            .search(query, vector.getFirst()).forEach(item -> System.out.println(
+                            .search(expanded, vector.get(1)).forEach(item -> System.out.println(
                                     "HYBRID heading=" + item.heading() + " rankScore=" + item.rankScore()
                                             + " source=" + item.sourceUrl()));
                 }

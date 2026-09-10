@@ -20,6 +20,25 @@ class LegalEvidenceSearchServiceTest {
     private final LegalEvidenceSearchServiceImpl service = new LegalEvidenceSearchServiceImpl(
             mock(AuthenticatedUser.class), transactions, embeddings, repository);
 
+    @Test void usesSameExpandedQueryForEmbeddingAndDatabaseSearch() {
+        float[] vector = new float[1536]; vector[0] = 1;
+        when(embeddings.embed(anyList())).thenReturn(java.util.List.of(vector));
+        when(repository.search(anyString(), any())).thenReturn(java.util.List.of());
+        when(transactions.execute(any())).thenAnswer(invocation -> {
+            java.util.function.Function<java.util.UUID, ?> action = invocation.getArgument(0);
+            return action.apply(java.util.UUID.randomUUID());
+        });
+        String query = "집 수리비를 제가 냈어요";
+        var response = service.search(query);
+        String expanded = kr.co.legalai.legaldata.service.impl.HousingSearchTerms.expand(query);
+        verify(embeddings).embed(java.util.List.of(expanded));
+        verify(repository).search(expanded, vector);
+        assertTrue(response.items().isEmpty());
+        var order = inOrder(embeddings, transactions);
+        order.verify(embeddings).embed(anyList());
+        order.verify(transactions).execute(any());
+    }
+
     @Test void rejectsInvalidQueryBeforeExternalCall() {
         for (String query : new String[]{null, " ", "가".repeat(1001)}) {
             assertEquals(ErrorCode.VALIDATION_ERROR,
