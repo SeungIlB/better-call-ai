@@ -25,7 +25,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 
-/** Responses API의 비스트리밍 사건 정리 연동. RAG·법률 판단·도구 실행은 아직 지원하지 않는다. */
+/** Responses API의 비스트리밍 사건 정리 및 서버 정의 구조화 출력 연동. 도구 실행은 지원하지 않는다. */
 @Repository
 public class OpenAiChatRepository {
     private static final String INSTRUCTIONS = """
@@ -94,17 +94,28 @@ public class OpenAiChatRepository {
     }
 
     public GeneratedAnswer generate(List<ChatInput> input) {
+        return generate(input, INSTRUCTIONS, Map.of(), 2);
+    }
+
+    /** 서버 내부의 근거 기반 초안 전용. 사용자에게 지침·스키마를 입력받지 않는다. */
+    public GeneratedAnswer generateStructured(String instructions, String input, Map<String, Object> schema) {
+        return generate(List.of(new ChatInput("user", input)), instructions,
+                Map.of("format", Map.of("type", "json_schema", "name", "legal_draft", "strict", true, "schema", schema)), 1);
+    }
+
+    private GeneratedAnswer generate(List<ChatInput> input, String instructions, Map<String, Object> textFormat, int attempts) {
         requireConfigured();
         try {
             Map<String, Object> payload = new LinkedHashMap<>(Map.of(
-                    "model", model, "instructions", INSTRUCTIONS, "input", input,
+                    "model", model, "instructions", instructions, "input", input,
                     "store", false, "stream", false, "max_output_tokens", maxOutputTokens));
             if (!reasoningEffort.isEmpty()) payload.put("reasoning", Map.of("effort", reasoningEffort));
+            if (!textFormat.isEmpty()) payload.put("text", textFormat);
             String body = mapper.writeValueAsString(payload);
             HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(requestTimeout)
                     .header("Authorization", "Bearer " + apiKey).header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-            for (int attempt = 0; attempt < 2; attempt++) {
+            for (int attempt = 0; attempt < attempts; attempt++) {
                 var pending = client.sendAsync(request, info -> new LimitedBody());
                 HttpResponse<byte[]> response;
                 try {
@@ -116,7 +127,7 @@ public class OpenAiChatRepository {
                 if (response.statusCode() == 200) return parse(response.body());
                 boolean transientError = response.statusCode() == 429
                         || (response.statusCode() >= 500 && response.statusCode() < 600);
-                if (attempt == 1 || !transientError) break;
+                if (attempt + 1 == attempts || !transientError) break;
                 // 긴 Retry-After 또는 HTTP-date는 즉시 실패시켜 클라이언트의 명시적 재시도로 넘긴다.
                 String retryAfter = response.headers().firstValue("Retry-After").orElse("1");
                 if (!retryAfter.matches("[0-2]")) break;

@@ -111,6 +111,19 @@ class OpenAiChatRepositoryTest {
     }
 
     @Test
+    void structuredGenerationSendsSchemaAndDoesNotRetry() {
+        repository("test-key").generateStructured("서버 지침", "문서 입력", java.util.Map.of("type", "object"));
+        assertEquals("json_schema", sent.get().path("text").path("format").path("type").asString());
+        assertTrue(sent.get().path("text").path("format").path("strict").asBoolean());
+        assertEquals("서버 지침", sent.get().path("instructions").asString());
+        initialStatus = 503;
+        calls.set(0);
+        assertThrows(BusinessException.class, () -> repository("test-key")
+                .generateStructured("서버 지침", "문서 입력", java.util.Map.of("type", "object")));
+        assertEquals(1, calls.get());
+    }
+
+    @Test
     void refusalAndEmptyOutputAreNotAnswers() {
         response.set(SUCCESS.replace("output_text", "refusal"));
         assertFailure();

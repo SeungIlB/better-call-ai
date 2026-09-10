@@ -2398,6 +2398,28 @@ class CaseFlowIntegrationTest {
         return "/api/v1/cases/" + fixture.caseId() + "/files/" + fixture.fileId() + "/legal-evidence/search";
     }
 
+    @Test
+    void legalDraftRequiresOwnerAndSkipsGenerationForEmptySearch() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "집 수리 확인 문서")).andExpect(status().isOk());
+        String path = "/api/v1/cases/" + fixture.caseId() + "/files/" + fixture.fileId() + "/legal-draft";
+        String body = "{\"query\":\"집 수선\",\"expectedCaseVersion\":2}";
+        mockMvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isUnauthorized());
+        var other = registerTestUser();
+        mockMvc.perform(post(path).header("Authorization", "Bearer " + other.accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isNotFound());
+        org.mockito.Mockito.verifyNoInteractions(searchEmbeddings);
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of(vector));
+        mockMvc.perform(post(path).header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("INSUFFICIENT_EVIDENCE"))
+                .andExpect(jsonPath("$.data.findings").isEmpty())
+                .andExpect(jsonPath("$.data.evidence.text").value("집 수리 확인 문서"));
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.never()).generateStructured(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
     private org.springframework.test.web.servlet.ResultActions caseSearch(OcrFixture fixture, int version, int start) throws Exception {
         return mockMvc.perform(post(caseSearchPath(fixture)).header("Authorization", "Bearer " + fixture.owner().accessToken())
                 .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(java.util.Map.of(

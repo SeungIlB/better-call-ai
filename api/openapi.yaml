@@ -8,6 +8,67 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /api/v1/cases/{caseId}/files/{fileId}/legal-draft:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+      - name: fileId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: generateLegalDraft
+      summary: 확정 OCR 발췌와 검색 출처를 이용한 검토용 안내 초안
+      description: >
+        사건별 검색과 같은 질문·발췌 제한을 적용한다. 후보가 없으면 생성 호출 없이 INSUFFICIENT_EVIDENCE를 반환한다.
+        후보가 있으면 채팅 모델 설정으로 구조화 초안을 생성하고 출처 번호·원문 인용을 검증한다.
+        출처 일치 검사는 설명의 법률적 타당성 검증이 아니다. 생성 후 사건 버전·확정본 변경 시 폐기한다.
+        분석 이력이나 채팅에 저장하지 않으며 재요청은 새 호출이다. 임베딩·생성 비용이 발생할 수 있다.
+        생성 자동 재시도는 없고 미완료·거부·검증 실패를 정상 초안으로 반환하지 않는다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query, expectedCaseVersion]
+              properties:
+                query: { type: string, minLength: 1, maxLength: 300 }
+                expectedCaseVersion: { type: integer, minimum: 1 }
+                excerptStart: { type: [integer, 'null'], minimum: 0, description: 생략/null은 0. 확정 수정본 UTF-16 시작 위치 }
+      responses:
+        '200':
+          description: 검토용 초안 또는 근거 부족 응답
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, const: true }
+                  traceId: { type: [string, 'null'] }
+                  data: { $ref: '#/components/schemas/LegalDraft' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: CASE_001 내 활성 사건이 아님 또는 FILE_001 현재 확정 수정본 없음
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '409':
+          description: CASE_002 사건 버전·확정본 변경
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '429':
+          description: LEGAL_ANSWER_002 초안 또는 LEGAL_DATA_003 검색 동시 처리 한도
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: COMMON_002 연동 미설정, LEGAL_DATA_002 검색 실패, LEGAL_ANSWER_001 생성·검증 실패
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /api/v1/cases/{caseId}/files/{fileId}/legal-evidence/search:
     parameters:
       - $ref: '#/components/parameters/CaseId'
@@ -782,6 +843,30 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ApiError' }
   schemas:
+    LegalDraft:
+      type: object
+      required: [caseId, caseVersion, evidence, status, summary, findings, questions, notice]
+      properties:
+        caseId: { type: string, format: uuid }
+        caseVersion: { type: integer, minimum: 1 }
+        evidence: { $ref: '#/components/schemas/EvidenceExcerpt' }
+        status: { type: string, enum: [NEEDS_REVIEW, INSUFFICIENT_EVIDENCE] }
+        summary: { type: string, maxLength: 600 }
+        findings:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            required: [explanation, quote, source]
+            properties:
+              explanation: { type: string, maxLength: 500 }
+              quote: { type: string, maxLength: 1000, description: 연결된 검색 본문에 포함된 연속 원문 }
+              source: { $ref: '#/components/schemas/LegalEvidence' }
+        questions:
+          type: array
+          maxItems: 3
+          items: { type: string, maxLength: 200 }
+        notice: { type: string }
     EvidenceExcerpt:
       type: object
       required: [fileId, revisionId, text, start, end, totalLength, partial]
