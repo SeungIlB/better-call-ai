@@ -91,19 +91,21 @@ async function openFile(id) {
 }
 async function renderAnalyses() {
   const form = document.querySelector('#analysis-form');
-  if (form) analysisInput = {query:form.elements.query.value,fileId:form.elements.fileId.value,excerptStart:Number(form.elements.excerptStart.value)};
+  if (form) analysisInput = {query:form.elements.query.value,fileIds:[...form.elements.fileIds.selectedOptions].map(option => option.value),excerptStart:Number(form.elements.excerptStart.value)};
   const [list, confirmed] = await Promise.all([api(casePath(`/analyses?page=${analysisPage}&pageSize=10`)), api(casePath('/confirmed-evidence?pageSize=100'))]);
   analyses = list.items; evidence = confirmed.evidence.items;
   if (selectedAnalysis) selectedAnalysis = await api(casePath(`/analyses/${selectedAnalysis.id}`));
   else selectedAnalysis = analyses.find(a => a.status === 'succeeded' && !a.stale) || analyses[0] || null;
-  document.querySelector('#workspace').innerHTML = `<div class="workspace-grid"><section class="panel"><h2>어떤 점을 확인하고 싶나요?</h2><p>확정한 자료 한 개의 발췌문을 근거와 함께 살펴봐요.</p>${evidence.length ? `<form id="analysis-form" class="stack"><label class="field">확정 자료<select name="fileId" id="evidence-select">${evidence.map((e,i) => `<option value="${esc(e.fileId)}" ${analysisInput?.fileId === e.fileId ? 'selected' : ''}>확정 자료 ${i+1} · ${date(e.confirmedAt)}</option>`).join('')}</select></label>${area('확인할 질문','query',analysisInput?.query || pendingAnalysis?.body.query || '이 자료에서 수선 비용을 확인하려면 어떤 근거와 추가 정보가 필요한가요?','required maxlength="300"')}${field('발췌 시작 위치 (글자 기준)','excerptStart',analysisInput?.excerptStart || 0,'id="excerpt-start" type="number" min="0" required')}<details open><summary>분석에 사용할 발췌문</summary><p id="excerpt-preview" class="quote"></p></details><label class="check"><input name="review" type="checkbox" required>선택한 발췌와 질문이 제가 확인하려는 내용이에요.</label><button>${pendingAnalysis ? '같은 요청의 결과 확인' : '이 내용으로 분석하기'}</button></form>` : '<div class="empty"><p>먼저 자료의 OCR 수정본을 확정해 주세요.</p><button data-act="tab" data-id="files">자료 확인하기</button></div>'}</section><section class="panel"><div class="row"><h2>분석 이력</h2><button class="ghost" data-act="refresh-analysis">새로고침</button></div>${analyses.map(a => `<div class="history-item"><div><strong>${a.version}차 검토</strong><small>${date(a.createdAt)} · ${a.stale ? '최신 아님' : a.status === 'running' ? '분석 중' : a.status === 'failed' ? '실패' : '검토 필요'}</small></div><button class="secondary" data-act="analysis" data-id="${esc(a.id)}">보기</button></div>`).join('') || '<p>아직 분석 이력이 없어요.</p>'}${pager('analyses',analysisPage,list.hasNext)}</section></div><div id="analysis-result"></div>`;
+  const selectedIds = analysisInput?.fileIds?.length ? analysisInput.fileIds : [analysisInput?.fileId || pendingAnalysis?.body?.fileId || evidence[0]?.fileId].filter(Boolean);
+  document.querySelector('#workspace').innerHTML = `<div class="workspace-grid"><section class="panel"><h2>어떤 점을 확인하고 싶나요?</h2><p>확정한 자료를 최대 5개까지 함께 비교해 볼 수 있어요.</p>${evidence.length ? `<form id="analysis-form" class="stack"><label class="field">확정 자료 (여러 개 선택 가능)<select name="fileIds" id="evidence-select" multiple size="4">${evidence.map((e,i) => `<option value="${esc(e.fileId)}" ${selectedIds.includes(e.fileId) ? 'selected' : ''}>확정 자료 ${i+1} · ${date(e.confirmedAt)}</option>`).join('')}</select></label><small>Ctrl 또는 ⌘를 누른 채 자료를 선택해 주세요. 최대 5개까지 사용할 수 있어요.</small>${area('확인할 질문','query',analysisInput?.query || pendingAnalysis?.body.query || '이 자료에서 수선 비용을 확인하려면 어떤 근거와 추가 정보가 필요한가요?','required maxlength="300"')}${field('발췌 시작 위치 (글자 기준)','excerptStart',analysisInput?.excerptStart || 0,'id="excerpt-start" type="number" min="0" required')}<details open><summary>분석에 사용할 발췌문</summary><p id="excerpt-preview" class="quote"></p></details><label class="check"><input name="review" type="checkbox" required>선택한 발췌와 질문이 제가 확인하려는 내용이에요.</label><button>${pendingAnalysis ? '같은 요청의 결과 확인' : '이 내용으로 분석하기'}</button></form>` : '<div class="empty"><p>먼저 자료의 OCR 수정본을 확정해 주세요.</p><button data-act="tab" data-id="files">자료 확인하기</button></div>'}</section><section class="panel"><div class="row"><h2>분석 이력</h2><button class="ghost" data-act="refresh-analysis">새로고침</button></div>${analyses.map(a => `<div class="history-item"><div><strong>${a.version}차 검토</strong><small>${date(a.createdAt)} · ${a.stale ? '최신 아님' : a.status === 'running' ? '분석 중' : a.status === 'failed' ? '실패' : '검토 필요'}</small></div><button class="secondary" data-act="analysis" data-id="${esc(a.id)}">보기</button></div>`).join('') || '<p>아직 분석 이력이 없어요.</p>'}${pager('analyses',analysisPage,list.hasNext)}</section></div><div id="analysis-result"></div>`;
   updateExcerpt(); renderResult();
 }
 function updateExcerpt() {
   const form = document.querySelector('#analysis-form'); if (!form) return;
-  const full = evidence.find(e => e.fileId === form.elements.fileId.value)?.correctedText || '';
-  const part = excerpt(full, Number(form.elements.excerptStart.value));
-  document.querySelector('#excerpt-preview').textContent = part ? `${part.start}–${part.end} / 전체 ${full.length}자${part.partial ? ' · 일부 발췌' : ''}\n\n${part.text}` : '시작 위치를 확인해 주세요.';
+  const ids = [...form.elements.fileIds.selectedOptions].map(option => option.value);
+  const start = Number(form.elements.excerptStart.value);
+  const parts = ids.map((id, index) => { const full = evidence.find(e => e.fileId === id)?.correctedText || ''; const part = excerpt(full, start); return part ? `[자료 ${index + 1}] ${part.start}–${part.end} / 전체 ${full.length}자${part.partial ? ' · 일부 발췌' : ''}\n\n${part.text}` : ''; }).filter(Boolean);
+  document.querySelector('#excerpt-preview').textContent = parts.length ? parts.join('\n\n') : '자료를 하나 이상 선택하고 시작 위치를 확인해 주세요.';
 }
 function renderResult() {
   const a = selectedAnalysis, node = document.querySelector('#analysis-result'); if (!a || !node) return;
@@ -151,10 +153,11 @@ app.addEventListener('submit', event => {
     if (form.id === 'ocr-save-form') { await api(filePath('/ocr-revisions'),{method:'POST',body:{extractionId:ocr.extractionId,expectedRevision:ocr.latestRevision?.revision || 0,correctedText:data.correctedText}}); await openFile(selectedFile.id); toast('수정본을 저장했어요. 내용을 검토하고 확정해 주세요.'); }
     if (form.id === 'ocr-confirm-form') { if (document.querySelector('#ocr-save-form textarea').value !== ocr.latestRevision.correctedText) throw new Error('수정한 내용을 먼저 저장해 주세요.'); const lines = value => value.split('\n').map(item => item.trim()).filter(Boolean); await api(filePath('/confirm'),{method:'POST',body:{revisionId:ocr.latestRevision.id,sensitiveDataReviewed:!!data.reviewed,observations:lines(data.observations || ''),unknowns:lines(data.unknowns || '')}}); clearPreview(); selectedAnalysis = null; await workspace(); toast('수정본과 사진 관찰을 확정했어요. 분석에 사용할 수 있어요.'); }
     if (form.id === 'analysis-form') {
-      const body = {fileId:data.fileId,query:data.query,expectedCaseVersion:current.version,excerptStart:Number(data.excerptStart)};
+      const fileIds = [...form.elements.fileIds.selectedOptions].map(option => option.value);
+      if (!fileIds.length || fileIds.length > 5) throw new Error('분석에 사용할 자료를 1~5개 선택해 주세요.');
+      const body = {fileId:fileIds[0],fileIds,query:data.query,expectedCaseVersion:current.version,excerptStart:Number(data.excerptStart)};
       analysisInput = body;
-      const full = evidence.find(e => e.fileId === body.fileId)?.correctedText || '';
-      if (!excerpt(full,body.excerptStart)) throw new Error('발췌 시작 위치를 확인해 주세요.');
+      if (fileIds.some(id => !excerpt(evidence.find(e => e.fileId === id)?.correctedText || '',body.excerptStart))) throw new Error('발췌 시작 위치를 확인해 주세요.');
       if (JSON.stringify(pendingAnalysis?.body) !== JSON.stringify(body)) pendingAnalysis = {body,key:crypto.randomUUID()};
       selectedAnalysis = await api(casePath('/analyses'),{method:'POST',body,key:pendingAnalysis.key});
       if (selectedAnalysis.status !== 'running') pendingAnalysis = null;
@@ -186,5 +189,6 @@ app.addEventListener('click', event => {
   });
 });
 app.addEventListener('input', event => { if (['excerpt-start','evidence-select'].includes(event.target.id)) updateExcerpt(); });
+app.addEventListener('change', event => { if (event.target.id === 'evidence-select') updateExcerpt(); });
 window.addEventListener('beforeunload', event => { if (busy) { event.preventDefault(); event.returnValue = ''; } });
 renderAuth();

@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.TransactionException;
 import tools.jackson.databind.ObjectMapper;
 import java.util.UUID;
+import java.util.List;
 import java.util.function.Function;
 
 @Service
@@ -30,7 +31,10 @@ public class AnalysisServiceImpl implements AnalysisService {
     private final ObjectMapper mapper;
 
     @Override public AnalysisResponse create(UUID caseId, UUID key, AnalysisRequest request) {
-        if (key == null || request == null || request.fileId() == null || request.query() == null || request.query().isBlank()
+        var fileIds = request == null ? List.<UUID>of() : request.selectedFileIds();
+        if (key == null || request == null || request.fileId() == null || fileIds.size() > 5
+                || fileIds.stream().anyMatch(java.util.Objects::isNull) || fileIds.stream().distinct().count() != fileIds.size()
+                || request.query() == null || request.query().isBlank()
                 || request.query().length() > 300 || request.expectedCaseVersion() < 1
                 || (request.excerptStart() != null && request.excerptStart() < 0)) throw error(ErrorCode.VALIDATION_ERROR);
         String fingerprint = LawArticleParser.hash(mapper.writeValueAsString(request));
@@ -45,25 +49,26 @@ public class AnalysisServiceImpl implements AnalysisService {
                 return previous.get().response();
             }
             if (version != request.expectedCaseVersion()) throw error(ErrorCode.CASE_VERSION_CONFLICT);
-            var current = evidence.findCurrent(caseId, request.fileId()).orElseThrow(() -> error(ErrorCode.FILE_NOT_FOUND));
-            int start = request.excerptStart() == null ? 0 : request.excerptStart();
-            if (start >= current.correctedText().length()) throw error(ErrorCode.VALIDATION_ERROR);
+            for (var fileId : fileIds) {
+                var current = evidence.findCurrent(caseId, fileId).orElseThrow(() -> error(ErrorCode.FILE_NOT_FOUND));
+                int start = request.excerptStart() == null ? 0 : request.excerptStart();
+                if (start >= current.correctedText().length()) throw error(ErrorCode.VALIDATION_ERROR);
+            }
             if (repository.running(caseId)) throw error(ErrorCode.ANALYSIS_BUSY);
             repository.reserve(id, caseId, scopedKey, fingerprint, request);
             return repository.get(caseId, id).orElseThrow();
         });
         if (!reservation.id().equals(id)) return reservation;
         try {
-            var draft = generator.generate(caseId, request.fileId(), new CaseEvidenceSearchRequest(
+            var draft = generator.generate(caseId, fileIds, new CaseEvidenceSearchRequest(
                     request.query(), request.expectedCaseVersion(), request.excerptStart()));
             return tx(userId -> {
                 if (lock(caseId) != request.expectedCaseVersion()) throw error(ErrorCode.CASE_VERSION_CONFLICT);
-                var current = evidence.findCurrent(caseId, request.fileId());
-                if (current.isEmpty() || !current.get().revisionId().equals(draft.evidence().revisionId())) {
-                    throw error(ErrorCode.CASE_VERSION_CONFLICT);
+                for (var fileId : fileIds) {
+                    if (evidence.findCurrent(caseId, fileId).isEmpty()) throw error(ErrorCode.CASE_VERSION_CONFLICT);
                 }
                 repository.expire(caseId);
-                if (!repository.complete(caseId, id, draft)) throw error(ErrorCode.ANALYSIS_FAILED);
+                if (!repository.complete(caseId, id, draft, fileIds)) throw error(ErrorCode.ANALYSIS_FAILED);
                 return repository.get(caseId, id).orElseThrow();
             });
         } catch (RuntimeException failure) {

@@ -66,7 +66,7 @@ public class SavedAnalysisRepository {
                 """, id, caseId, key, fingerprint, mapper.writeValueAsString(Map.of("request", request)), caseId);
     }
 
-    public boolean complete(UUID caseId, UUID id, LegalDraftResponse draft) {
+    public boolean complete(UUID caseId, UUID id, LegalDraftResponse draft, List<UUID> fileIds) {
         int count = jdbc.update("""
                 UPDATE aiops.analysis_runs SET status='succeeded',completed_at=now(),summary=?,
                     display_snapshot=jsonb_set(display_snapshot,'{result}',?::jsonb)
@@ -74,10 +74,13 @@ public class SavedAnalysisRepository {
                 """, draft.summary(), mapper.writeValueAsString(draft), caseId, id);
         if (count == 1) {
             jdbc.update("UPDATE casework.cases SET current_analysis_run_id=? WHERE id=?", id, caseId);
-            jdbc.update("""
-                    INSERT INTO aiops.analysis_run_inputs(analysis_run_id,source_type,source_id,content_hash)
-                    VALUES (?,'ocr_revision',?,?)
-                    """, id, draft.evidence().revisionId(), kr.co.legalai.legaldata.service.impl.LawArticleParser.hash(draft.evidence().text()));
+            for (var fileId : fileIds) {
+                jdbc.update("""
+                        INSERT INTO aiops.analysis_run_inputs(analysis_run_id,source_type,source_id,content_hash)
+                        SELECT ?,'ocr_revision',f.current_ocr_revision_id,?
+                        FROM casework.files f WHERE f.id=? AND f.case_id=? AND f.current_ocr_revision_id IS NOT NULL
+                        """, id, kr.co.legalai.legaldata.service.impl.LawArticleParser.hash(draft.evidence().text() + ":" + fileId), fileId, caseId);
+            }
         }
         return count == 1;
     }

@@ -60,6 +60,25 @@ class LegalDraftServiceTest {
         assertFalse(result.notice().isBlank());
     }
 
+    @Test void multipleEvidenceIsCombinedForOneDraft() {
+        UUID secondFile = UUID.randomUUID();
+        UUID secondRevision = UUID.randomUUID();
+        when(search.search(caseId, fileId, request)).thenReturn(contextResponse("첫 자료", revision, false));
+        when(search.search(caseId, secondFile, request)).thenReturn(contextResponse("둘째 자료", secondRevision, false));
+        when(evidence.findCurrent(caseId, secondFile)).thenReturn(Optional.of(
+                ConfirmedEvidenceResponse.builder().revisionId(secondRevision).build()));
+        var result = service.generate(caseId, List.of(fileId, secondFile), request);
+        assertTrue(result.evidence().text().contains("[자료 1]"));
+        assertTrue(result.evidence().text().contains("둘째 자료"));
+        verify(generator).generate(anyString(), any(), anyList());
+    }
+
+    private CaseEvidenceSearchResponse contextResponse(String text, UUID revisionId, boolean empty) {
+        return CaseEvidenceSearchResponse.builder().caseId(caseId).caseVersion(2)
+                .evidence(EvidenceExcerptResponse.builder().fileId(fileId).revisionId(revisionId).text(text).build())
+                .results(new PageResponse<>(empty ? List.of() : List.of(LegalEvidenceResponse.builder().build()), 1, 8, false)).build();
+    }
+
     @Test void changedVersionRevisionOrDeletedCaseDiscardsDraft() {
         context(false);
         when(evidence.lockVersion(caseId)).thenReturn(Optional.of(3));
