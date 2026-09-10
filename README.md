@@ -28,6 +28,10 @@ OpenAI OCR 실행·조회, 수정본 이력·확정과 확정 후 임시 원본 
 
 ### OpenAI OCR 및 수정본 확정
 
+검색·분석 입력 연결의 첫 단계로 `GET /api/v1/cases/{caseId}/confirmed-evidence`를 제공한다. 내 사건의 현재 확정 텍스트만 `fileId`, `revisionId`, `confirmedAt`과 함께 반환하며, 기계 인식 원문·미확정 초안·과거 확정본·제거된 파일을 포함하지 않는다. 원본 삭제 후에도 확정 텍스트는 조회된다. 아직 외부 AI나 법률 검색을 호출하는 API는 아니다.
+
+응답은 `data.caseId`, `data.caseVersion`, `data.evidence`(공통 페이지 형식)다. `page`는 1~10000, `pageSize`는 1~100(기본 20), 정렬은 확정 시각·파일 ID 내림차순이다. 다음 페이지에는 첫 응답의 `caseVersion`을 `expectedCaseVersion`으로 보내면 변경 시 409 `CASE_002`로 차단한다. 새 초안 저장만으로는 확정본이 바뀌지 않으며, 새 확정 시 버전이 증가한다. 소유권·삭제 여부·버전과 본문을 짧은 단일 트랜잭션에서 확인한다.
+
 기존 `OPENAI_API_KEY`를 공유한다. `OPENAI_OCR_MODEL`을 설정하지 않으면 `OPENAI_CHAT_MODEL`을 사용하며, 이미지와 PDF 입력을 지원하는 모델이어야 한다. 빈 값으로 별도 설정하면 미설정 오류가 발생한다. `OCR_PROVIDER`는 이 경로에서 사용하지 않는다. 외부 키가 없어도 앱 시작과 외부 연동 외 기능은 사용할 수 있다.
 
 2026-09-10 실제 호출 평가에서 가상 문서 8건의 핵심 항목 69개와 공개 표준계약서 2페이지의 선정 문구 29개를 확인했다. 평가 설정은 `OPENAI_OCR_MODEL=gpt-5.6-sol`, `OPENAI_OCR_REASONING_EFFORT=none`, `OPENAI_OCR_TIMEOUT_SECONDS=150`이다. 표준계약서는 기존 90초 제한에서 실패 사례가 있어 최대 150초를 허용했다. 이는 실제 촬영 문서 전체의 정확도 보증이 아니다. [평가 결과·한계·재실행 방법](docs/ocr-accuracy-evaluation.md)을 참고한다.

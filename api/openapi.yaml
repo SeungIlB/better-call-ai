@@ -481,6 +481,37 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/OcrConflict' }
+  /api/v1/cases/{caseId}/confirmed-evidence:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    get:
+      operationId: listConfirmedEvidence
+      summary: 검색·분석에 사용할 현재 확정 OCR 조회
+      description: 내 사건의 현재 확정 수정본만 반환한다. 기계 원문·미확정 초안·이전 확정본·제거된 파일은 제외한다. 원본이 삭제된 파일의 확정 텍스트는 유지한다. 이 요청은 외부 AI 호출이나 법률 검색을 실행하지 않는다. 다음 페이지에는 첫 응답의 caseVersion을 expectedCaseVersion으로 전달하며 충돌 시 첫 페이지부터 다시 조회한다.
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 10000, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: expectedCaseVersion
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: 사건 버전과 확정 자료 페이지. 확정 자료가 없으면 빈 목록.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceContextSuccess' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CASE_002 사건 버전이 변경되어 페이지를 이어 조회할 수 없음
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /api/v1/cases/{caseId}/analyses:
     parameters:
       - $ref: '#/components/parameters/CaseId'
@@ -616,6 +647,36 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ApiError' }
   schemas:
+    ConfirmedEvidence:
+      type: object
+      required: [fileId, revisionId, correctedText, confirmedAt]
+      properties:
+        fileId: { type: string, format: uuid }
+        revisionId: { type: string, format: uuid }
+        correctedText: { type: string, maxLength: 100000, description: 사용자 확정 본문. HTML로 직접 삽입 금지 }
+        confirmedAt: { type: string, format: date-time }
+    EvidenceContextSuccess:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        traceId: { type: [string, 'null'] }
+        data:
+          type: object
+          required: [caseId, caseVersion, evidence]
+          properties:
+            caseId: { type: string, format: uuid }
+            caseVersion: { type: integer, minimum: 1 }
+            evidence:
+              type: object
+              required: [items, page, pageSize, hasNext]
+              properties:
+                items:
+                  type: array
+                  items: { $ref: '#/components/schemas/ConfirmedEvidence' }
+                page: { type: integer }
+                pageSize: { type: integer }
+                hasNext: { type: boolean }
     StartOcrRequest:
       type: object
       required: [externalOcrAccepted]

@@ -2219,6 +2219,71 @@ class CaseFlowIntegrationTest {
                 .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
     }
 
+    @Test
+    void confirmedEvidenceExcludesMachineTextAndDraftsAndRejectsStaleVersion() throws Exception {
+        var fixture = ocrFixture();
+        String path = "/api/v1/cases/" + fixture.caseId() + "/confirmed-evidence";
+        String token = "Bearer " + fixture.owner().accessToken();
+        mockMvc.perform(get(path).header("Authorization", token)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.caseVersion").value(1)).andExpect(jsonPath("$.data.evidence.items").isEmpty());
+        UUID first = saveOcr(fixture, 0, "첫 확정 내용");
+        mockMvc.perform(get(path).header("Authorization", token)).andExpect(jsonPath("$.data.evidence.items").isEmpty());
+        confirmOcr(fixture, first).andExpect(status().isOk());
+        UUID second = saveOcr(fixture, 1, "아직 확정하지 않은 새 내용");
+        mockMvc.perform(get(path).header("Authorization", token)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.caseVersion").value(2))
+                .andExpect(jsonPath("$.data.evidence.items[0].revisionId").value(first.toString()))
+                .andExpect(jsonPath("$.data.evidence.items[0].correctedText").value("첫 확정 내용"))
+                .andExpect(jsonPath("$.data.evidence.items[0].rawText").doesNotExist())
+                .andExpect(jsonPath("$.data.evidence.items[0].confirmedAt").isNotEmpty());
+        assertTrue(!Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        confirmOcr(fixture, second).andExpect(status().isOk());
+        mockMvc.perform(get(path).param("expectedCaseVersion", "2").header("Authorization", token))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CASE_002"));
+        mockMvc.perform(get(path).param("expectedCaseVersion", "3").header("Authorization", token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.evidence.items[0].revisionId").value(second.toString()));
+    }
+
+    @Test
+    void confirmedEvidenceEnforcesOwnershipDeletionAndPageBounds() throws Exception {
+        var fixture = pendingOcrFixture();
+        var other = registerTestUser();
+        String path = "/api/v1/cases/" + fixture.caseId() + "/confirmed-evidence";
+        String token = "Bearer " + fixture.owner().accessToken();
+        mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + other.accessToken())).andExpect(status().isNotFound());
+        mockMvc.perform(get(path).param("page", "0").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(get(path).param("pageSize", "101").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(get(path).param("expectedCaseVersion", "0").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(delete("/api/v1/cases/{caseId}", fixture.caseId()).header("Authorization", token))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get(path).header("Authorization", token)).andExpect(status().isNotFound());
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.never())
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void confirmedEvidencePagesOnlyCurrentConfirmedRevisions() throws Exception {
+        var first = ocrFixture();
+        confirmOcr(first, saveOcr(first, 0, "첫 번째 파일")).andExpect(status().isOk());
+        UUID file = uploadTestFile(first.owner(), first.caseId(),
+                new MockMultipartFile("file", "두번째.pdf", "application/pdf", testPdf(1)));
+        var pending = new OcrFixture(first.owner(), first.caseId(), file, null);
+        var result = startOcr(pending, UUID.randomUUID()).andExpect(status().isOk()).andReturn();
+        UUID extraction = UUID.fromString(objectMapper.readTree(result.getResponse().getContentAsString()).path("data").path("extractionId").asString());
+        var second = new OcrFixture(first.owner(), first.caseId(), file, extraction);
+        confirmOcr(second, saveOcr(second, 0, "두 번째 파일")).andExpect(status().isOk());
+        String path = "/api/v1/cases/" + first.caseId() + "/confirmed-evidence";
+        String token = "Bearer " + first.owner().accessToken();
+        mockMvc.perform(get(path).param("pageSize", "1").header("Authorization", token)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.caseVersion").value(3)).andExpect(jsonPath("$.data.evidence.hasNext").value(true))
+                .andExpect(jsonPath("$.data.evidence.items[0].fileId").value(file.toString()));
+        mockMvc.perform(get(path).param("pageSize", "1").param("page", "2").param("expectedCaseVersion", "3")
+                        .header("Authorization", token)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.evidence.hasNext").value(false))
+                .andExpect(jsonPath("$.data.evidence.items[0].fileId").value(first.fileId().toString()));
+    }
+
     private void ocrUpdate(String sql, Object... params) throws SQLException {
         try (var connection = adminConnection(); var statement = connection.prepareStatement(sql)) {
             for (int i = 0; i < params.length; i++) statement.setObject(i + 1, params[i]);
