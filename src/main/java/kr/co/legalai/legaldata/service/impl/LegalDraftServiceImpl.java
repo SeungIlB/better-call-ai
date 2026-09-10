@@ -7,6 +7,7 @@ import kr.co.legalai.file.repository.ConfirmedEvidenceRepository;
 import kr.co.legalai.legaldata.dto.request.CaseEvidenceSearchRequest;
 import kr.co.legalai.legaldata.dto.response.LegalDraftResponse;
 import kr.co.legalai.legaldata.dto.response.EvidenceExcerptResponse;
+import kr.co.legalai.legaldata.dto.response.CaseEvidenceSearchResponse;
 import kr.co.legalai.legaldata.repository.GroundedAnswerRepository;
 import kr.co.legalai.legaldata.service.CaseEvidenceSearchService;
 import kr.co.legalai.legaldata.service.LegalDraftService;
@@ -18,6 +19,8 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -59,6 +62,7 @@ public class LegalDraftServiceImpl implements LegalDraftService {
                     ? new GroundedAnswerRepository.Draft("검색된 법률 근거가 없어 안내 초안을 만들지 못했습니다.",
                             List.of(), List.of("분쟁 상황이나 다른 확정 문서 발췌를 확인해 주세요."))
                     : generator.generate(request.query(), combinedEvidence, sources.stream().distinct().toList());
+            var conflicts = findConflicts(contexts);
             transactions.execute(userId -> {
                 int version = evidence.lockVersion(caseId).orElseThrow(() -> new BusinessException(ErrorCode.CASE_NOT_FOUND));
                 if (version != first.caseVersion()) throw new BusinessException(ErrorCode.CASE_VERSION_CONFLICT);
@@ -73,12 +77,32 @@ public class LegalDraftServiceImpl implements LegalDraftService {
             });
             return LegalDraftResponse.builder().caseId(caseId).caseVersion(first.caseVersion()).evidence(combinedEvidence)
                     .status(draft.findings().isEmpty() ? "INSUFFICIENT_EVIDENCE" : "NEEDS_REVIEW")
-                    .summary(draft.summary()).findings(draft.findings()).questions(draft.questions())
+                    .summary(draft.summary()).findings(draft.findings()).questions(draft.questions()).conflicts(conflicts)
                     .notice("발췌문과 검색된 현행 법령에 근거한 검토용 초안입니다. 사건 당시 법령과 사실관계 확인이 필요합니다.").build();
         } catch (DataAccessException | TransactionException failure) {
             throw new BusinessException(ErrorCode.LEGAL_ANSWER_FAILED);
         } finally {
             slots.release();
         }
+    }
+
+    private List<String> findConflicts(List<CaseEvidenceSearchResponse> contexts) {
+        if (contexts.size() < 2) return List.of();
+        var conflicts = new ArrayList<String>();
+        addDifferences(conflicts, contexts, Pattern.compile("(?<!\\d)(?:19|20)\\d{2}[.\\-/]\\d{1,2}[.\\-/]\\d{1,2}(?!\\d)"), "날짜");
+        addDifferences(conflicts, contexts, Pattern.compile("(?<!\\d)\\d{1,3}(?:,\\d{3})+(?:원)?|(?<!\\d)\\d+원"), "금액");
+        return List.copyOf(conflicts);
+    }
+
+    private void addDifferences(List<String> conflicts, List<CaseEvidenceSearchResponse> contexts, Pattern pattern, String label) {
+        var values = contexts.stream().map(context -> pattern.matcher(context.evidence().text()).results()
+                .map(match -> match.group()).collect(Collectors.toSet())).toList();
+        var distinct = values.stream().flatMap(java.util.Collection::stream).distinct().toList();
+        if (distinct.size() < 2) return;
+        var locations = new ArrayList<String>();
+        for (int index = 0; index < values.size(); index++) {
+            if (!values.get(index).isEmpty()) locations.add("자료 " + (index + 1) + ": " + String.join(", ", values.get(index)));
+        }
+        conflicts.add("자료 간 확인이 필요한 " + label + " 차이 — " + String.join(" / ", locations));
     }
 }

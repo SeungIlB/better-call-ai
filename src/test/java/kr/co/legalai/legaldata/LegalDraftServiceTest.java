@@ -73,6 +73,19 @@ class LegalDraftServiceTest {
         verify(generator).generate(anyString(), any(), anyList());
     }
 
+    @Test void multipleEvidenceReportsDifferentDatesAndAmountsAsReviewCandidates() {
+        UUID secondFile = UUID.randomUUID();
+        UUID secondRevision = UUID.randomUUID();
+        when(search.search(caseId, fileId, request)).thenReturn(contextResponse("발생일 2026-03-01, 수리비 100,000원", revision, false));
+        when(search.search(caseId, secondFile, request)).thenReturn(contextResponse("발생일 2026-03-03, 수리비 120,000원", secondRevision, false));
+        when(evidence.findCurrent(caseId, secondFile)).thenReturn(Optional.of(
+                ConfirmedEvidenceResponse.builder().revisionId(secondRevision).build()));
+        var result = service.generate(caseId, List.of(fileId, secondFile), request);
+        assertEquals(2, result.conflicts().size());
+        assertTrue(result.conflicts().stream().anyMatch(item -> item.contains("날짜")));
+        assertTrue(result.conflicts().stream().anyMatch(item -> item.contains("금액")));
+    }
+
     private CaseEvidenceSearchResponse contextResponse(String text, UUID revisionId, boolean empty) {
         return CaseEvidenceSearchResponse.builder().caseId(caseId).caseVersion(2)
                 .evidence(EvidenceExcerptResponse.builder().fileId(fileId).revisionId(revisionId).text(text).build())

@@ -986,7 +986,7 @@ components:
             - { type: 'null' }
     LegalDraft:
       type: object
-      required: [caseId, caseVersion, evidence, status, summary, findings, questions, notice]
+      required: [caseId, caseVersion, evidence, status, summary, findings, questions, conflicts, notice]
       properties:
         caseId: { type: string, format: uuid }
         caseVersion: { type: integer, minimum: 1 }
@@ -1007,6 +1007,11 @@ components:
           type: array
           maxItems: 3
           items: { type: string, maxLength: 200 }
+        conflicts:
+          type: array
+          maxItems: 2
+          items: { type: string, maxLength: 500 }
+          description: 여러 확정 자료에서 자동으로 찾아낸 비교 후보. 사실·책임·법률 결론이 아니다.
         notice: { type: string }
     EvidenceExcerpt:
       type: object
