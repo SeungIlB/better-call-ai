@@ -4,3 +4,5 @@
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 @media(max-width:650px){button{min-height:44px}.file-row button,.pager button,.user button{min-height:40px}.panel>button{min-height:48px}.tabs{scrollbar-width:thin}.brand{font-size:16px}.auth-inner button[type=submit]{min-height:52px}}
+/* 편집 영역을 먼저 보여주고 원문은 접어 비교할 수 있게 한다. */
+.ocr-grid > form { order: -1; }

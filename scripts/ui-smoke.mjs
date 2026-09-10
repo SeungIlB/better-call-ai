@@ -83,14 +83,14 @@ try {
   await page.getByRole('button',{name:'파일 올리기',exact:true}).click();
   await page.locator('[name=consent]').check();
   await page.getByRole('button',{name:'문서 내용 인식하기'}).click();
-  await page.getByLabel('인식 내용 수정').fill('천장 누수 확인. 원인은 아직 미확인.');
+  await page.getByLabel('인식 내용 확인 및 수정').fill('천장 누수 확인. 원인은 아직 미확인.');
   await page.getByRole('button',{name:'수정본 저장'}).click();
   await page.getByRole('status').filter({hasText:'수정본을 저장했어요'}).waitFor();
-  await page.getByLabel('인식 내용 수정').fill('아직 저장하지 않은 변경');
+  await page.getByLabel('인식 내용 확인 및 수정').fill('아직 저장하지 않은 변경');
   await page.locator('#ocr-confirm-form [name=reviewed]').check();
   await page.getByRole('button',{name:'이 수정본으로 확정하기'}).click();
   await page.getByRole('status').filter({hasText:'먼저 저장'}).waitFor(); assert.equal(revision.confirmedAt,undefined);
-  await page.getByLabel('인식 내용 수정').fill(revision.correctedText);
+  await page.getByLabel('인식 내용 확인 및 수정').fill(revision.correctedText);
   await page.getByRole('button',{name:'이 수정본으로 확정하기'}).click();
   expireOnce=true;
   await page.getByRole('button',{name:'분석 결과',exact:true}).click();
