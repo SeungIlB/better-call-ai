@@ -26,6 +26,8 @@ public enum ErrorCode {
     UPLOAD_IN_PROGRESS(HttpStatus.CONFLICT, "FILE_011", "같은 요청이 처리 중입니다. 잠시 후 동일한 키로 확인해 주세요."),
     MALWARE_SCAN_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "FILE_008", "파일 보안 검사를 완료할 수 없습니다. 잠시 후 다시 시도해 주세요."),
     EXTERNAL_API_ERROR(HttpStatus.BAD_GATEWAY, "LEGAL_DATA_001", "외부 법률 데이터 서비스 호출에 실패했습니다."),
+    LEGAL_SEARCH_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "LEGAL_DATA_002", "법률 근거 검색을 완료하지 못했습니다."),
+    LEGAL_SEARCH_BUSY(HttpStatus.TOO_MANY_REQUESTS, "LEGAL_DATA_003", "검색 요청이 많습니다. 잠시 후 다시 시도해 주세요."),
     INTEGRATION_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "COMMON_002", "외부 연동 설정이 필요합니다."),
     CHAT_KEY_CONFLICT(HttpStatus.CONFLICT, "CHAT_001", "같은 요청 키에 다른 질문을 사용할 수 없습니다."),
     CHAT_BUSY(HttpStatus.TOO_MANY_REQUESTS, "CHAT_002", "잠시 후 다시 시도해 주세요."),

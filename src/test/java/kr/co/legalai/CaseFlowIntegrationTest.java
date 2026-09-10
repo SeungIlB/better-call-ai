@@ -70,6 +70,81 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class CaseFlowIntegrationTest {
+    @MockitoBean
+    private kr.co.legalai.legaldata.repository.EmbeddingRepository searchEmbeddings;
+
+    @Test
+    void legalEvidenceSearchRequiresAuthenticationAndValidInput() throws Exception {
+        mockMvc.perform(post("/api/v1/legal-evidence/search").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"query\":\"수선 비용\"}")).andExpect(status().isUnauthorized());
+        var owner = registerTestUser();
+        for (String query : List.of(" ", "가".repeat(1001))) {
+            mockMvc.perform(post("/api/v1/legal-evidence/search")
+                    .header("Authorization", "Bearer " + owner.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(java.util.Map.of("query", query))))
+                    .andExpect(status().isBadRequest());
+        }
+        org.mockito.Mockito.verifyNoInteractions(searchEmbeddings);
+    }
+
+    @Test
+    void legalEvidenceSearchReturnsRankedOfficialChunksAndExcludesIneligibleVersions() throws Exception {
+        var dataSource = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        var admin = new JdbcTemplate(dataSource);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource));
+        var importer = new kr.co.legalai.legaldata.repository.LawImportRepository(admin, objectMapper);
+        String externalId = UUID.randomUUID().toString();
+        String hash = "a".repeat(64);
+        var parts = new java.util.ArrayList<kr.co.legalai.legaldata.entity.CollectedLaw.Part>();
+        for (int i = 0; i < 12; i++) {
+            parts.add(kr.co.legalai.legaldata.entity.CollectedLaw.Part.builder().heading("제" + (i + 1) + "조")
+                    .type("article").content(i == 0 ? "수선 비용 관련 가상 조문" : "다른 가상 조문 " + i)
+                    .metadata(java.util.Map.of("topic_tags", i == 10 ? List.of() : List.of("housing_lease"),
+                            "content_hash", hash, "deleted", i == 9,
+                            "effective_from", i == 8 ? "2999-01-01" : "2020-01-01")).build());
+        }
+        var law = kr.co.legalai.legaldata.entity.CollectedLaw.builder().externalId(externalId).title("검색 테스트 법령")
+                .serial("1").effectiveFrom(java.time.LocalDate.of(2020, 1, 1))
+                .kind(kr.co.legalai.legaldata.entity.LawKind.ACT)
+                .sourceUrl("https://www.law.go.kr/LSW/lsInfoP.do?lsiSeq=1")
+                .rawJson("{}").contentHash(hash).parts(parts).build();
+        tx.executeWithoutResult(s -> importer.save(law));
+        try {
+            var rows = admin.queryForList("""
+                    SELECT c.id, c.ordinal FROM knowledge.legal_chunks c
+                    JOIN knowledge.legal_documents d ON d.id=c.document_id WHERE d.external_id=? ORDER BY c.ordinal
+                    """, externalId);
+            float[] vector = new float[1536]; vector[0] = 1;
+            var inputs = rows.stream().map(r -> new kr.co.legalai.legaldata.repository.LawImportRepository.EmbeddingInput(
+                    (UUID) r.get("id"), "테스트", ((Number) r.get("ordinal")).intValue() == 11 ? "b".repeat(64) : hash)).toList();
+            tx.executeWithoutResult(s -> importer.saveEmbeddings(
+                    kr.co.legalai.legaldata.repository.EmbeddingRepository.MODEL, inputs,
+                    java.util.Collections.nCopies(inputs.size(), vector)));
+            org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of(vector));
+            var owner = registerTestUser();
+            String body = mockMvc.perform(post("/api/v1/legal-evidence/search")
+                    .header("Authorization", "Bearer " + owner.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"query\":\"수선 비용\"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(8))
+                    .andExpect(jsonPath("$.data.items[0].content").value("수선 비용 관련 가상 조문"))
+                    .andExpect(jsonPath("$.data.items[0].sourceUrl").value(law.sourceUrl()))
+                    .andExpect(jsonPath("$.data.page").value(1)).andExpect(jsonPath("$.data.hasNext").value(false))
+                    .andReturn().getResponse().getContentAsString();
+            var found = objectMapper.readTree(body).path("data").path("items");
+            var allowed = rows.subList(0, 8).stream().map(r -> r.get("id").toString()).toList();
+            for (var item : found) assertTrue(allowed.contains(item.path("chunkId").asString()));
+            admin.update("UPDATE knowledge.legal_documents SET is_current=false WHERE external_id=?", externalId);
+            mockMvc.perform(post("/api/v1/legal-evidence/search")
+                    .header("Authorization", "Bearer " + owner.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"query\":\"수선 비용\"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(0));
+        } finally {
+            admin.update("DELETE FROM knowledge.legal_documents WHERE external_id=?", externalId);
+        }
+    }
+
     @Test
     void lawImportIsTransactionalAndEmbeddingsAreIdempotent() {
         var dataSource = new org.springframework.jdbc.datasource.DriverManagerDataSource(

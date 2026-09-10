@@ -20,7 +20,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 
-/** 공개 법률 조문 임베딩 전용. 자동 재시도하지 않고 실패 시 이미 저장한 배치부터 재개한다. */
+/** 법률 조문·검색어 임베딩. 자동 재시도하지 않으며 입력 본문을 로그에 남기지 않는다. */
 @Repository
 public class EmbeddingRepository {
     public static final String MODEL = "text-embedding-3-small";
@@ -76,6 +76,10 @@ public class EmbeddingRepository {
         } catch (Exception failure) {
             throw new IllegalStateException("EMBEDDING_REQUEST_FAILED");
         }
+    }
+
+    public void requireConfigured() {
+        if (key == null || key.isBlank()) throw new kr.co.legalai.common.exception.IntegrationNotConfiguredException();
     }
 
     private IllegalStateException invalid() { return new IllegalStateException("INVALID_EMBEDDING_RESPONSE"); }

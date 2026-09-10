@@ -71,8 +71,13 @@ public class LegalDataImportCommand {
                 case "collect" -> service.collect();
                 case "embed" -> service.embed();
                 case "search-check" -> {
-                    var vector = embeddings.embed(List.of("임대인이 집 수리를 해주지 않아 제가 수리비를 냈습니다. 돌려받을 수 있나요?"));
+                    String query = "임대인이 집 수리를 해주지 않아 제가 수리비를 냈습니다. 돌려받을 수 있나요?";
+                    var vector = embeddings.embed(List.of(query));
                     repository.search(vector.getFirst()).forEach(System.out::println);
+                    new kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository(new JdbcTemplate(dataSource))
+                            .search(query, vector.getFirst()).forEach(item -> System.out.println(
+                                    "HYBRID heading=" + item.heading() + " rankScore=" + item.rankScore()
+                                            + " source=" + item.sourceUrl()));
                 }
                 default -> { }
             }
