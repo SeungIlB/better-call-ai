@@ -9,7 +9,7 @@ public final class HousingSearchTerms {
 
     public static String expand(String query) {
         String original = query.strip();
-        if (!contains(original, "집", "주택", "임대", "임차", "세입자", "전세", "월세", "방")) return original;
+        if (!contains(original, "집", "주택", "임대", "임차", "세입자", "전세", "월세", "방", "전입", "전출")) return original;
         var terms = new LinkedHashSet<String>();
         boolean repair = contains(original, "수리", "수선", "고장", "누수", "곰팡이", "보일러", "하자", "물이 새", "물이 샙");
         if (repair) {
@@ -18,7 +18,7 @@ public final class HousingSearchTerms {
                 terms.addAll(List.of("임차인", "필요비", "상환청구권", "상환"));
             }
         }
-        if (contains(original, "못 쓰", "쓸 수 없", "사용할 수 없", "못 사용")) {
+        if (contains(original, "못 쓰", "쓸 수 없", "사용할 수 없", "못 사용", "쓰지 못", "사용하지 못")) {
             terms.addAll(List.of("일부멸실", "차임", "감액", "해지"));
         }
         if (original.contains("보증금") && contains(original, "돌려", "못 받", "반환", "안 줘", "안 주")) {

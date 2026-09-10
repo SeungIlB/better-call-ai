@@ -10,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +36,9 @@ public class GroundedAnswerRepository {
             questions에는 추가로 확인할 사실을 최대 3개 질문한다. 이미 제공한 정보를 반복해서 묻지 않는다.
             보증금 반환 가능성·승소율·책임 비율·법적 기한을 단정하지 않고 지급 중단·해지·소송을 확정적으로 권하지 않는다.
             과거 사건에 현행 조문이 그대로 적용된다고 가정하지 않는다. 판례나 읽지 않은 문서를 참고했다고 말하지 않는다.
+            referenceDate는 서버의 한국 날짜이며 사건 발생일이 아니다. 현재·장래 비교는 이 날짜만 기준으로 한다.
+            sources의 effectiveFrom이 referenceDate 이하이면 장래 시행이라고 말하지 않는다.
+            사건 시점이 미확인이면 시행일과 사건 시점의 선후도 미확인이다. 현재 시행 여부와 당시 적용 여부를 구분한다.
             법령명·조문번호·출처 링크는 서버가 표시한다. quote 외 생성 문장에 조문번호·사건번호·URL을 작성하지 않는다.
             불필요한 이름·주소·연락처·계좌번호를 재출력하지 않는다. 비공개 추론 과정 대신 짧은 설명만 작성한다.
             summary는 600자, explanation은 각 500자, quote는 각 1000자, questions는 각각 200자 이내로 작성한다.
@@ -49,7 +54,8 @@ public class GroundedAnswerRepository {
                 inputs.add(Map.of("sourceId", i + 1, "content", source.content(), "title", source.title(),
                         "heading", source.heading(), "effectiveFrom", source.effectiveFrom().toString()));
             }
-            String input = mapper.writeValueAsString(Map.of("question", question, "evidence", evidence, "sources", inputs));
+            String input = mapper.writeValueAsString(Map.of("question", question, "evidence", evidence, "sources", inputs,
+                    "referenceDate", LocalDate.now(ZoneId.of("Asia/Seoul")).toString()));
             var result = openAi.generateStructured(INSTRUCTIONS, input, schema());
             return parse(result.text(), sources);
         } catch (BusinessException failure) {
