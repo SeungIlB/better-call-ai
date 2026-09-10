@@ -33,7 +33,7 @@ public class LegalDataImportCommand {
     }
 
     private static void run(String[] args) throws Exception {
-        if (args.length != 1 || !List.of("collect", "embed", "verify", "search-check", "search-evaluate", "draft-evaluate").contains(args[0])) {
+        if (args.length != 1 || !List.of("collect", "embed", "verify", "search-check", "search-evaluate", "draft-evaluate", "flow-evaluate").contains(args[0])) {
             throw new IllegalStateException("INVALID_LEGAL_DATA_COMMAND");
         }
         Map<String, String> config = new HashMap<>();
@@ -55,7 +55,7 @@ public class LegalDataImportCommand {
         var dataSource = new DriverManagerDataSource(url, required(config, "DATABASE_MIGRATION_USER"),
                 required(config, "DATABASE_MIGRATION_PASSWORD"));
         if (args[0].equals("collect")) required(config, "LAW_OPEN_DATA_OC");
-        if (List.of("embed", "search-check", "search-evaluate", "draft-evaluate").contains(args[0])) required(config, "OPENAI_API_KEY");
+        if (List.of("embed", "search-check", "search-evaluate", "draft-evaluate", "flow-evaluate").contains(args[0])) required(config, "OPENAI_API_KEY");
         // 별도 세션 잠금으로 동시 운영 명령의 중복 생성·과금을 방지한다. 사용자 요청용 풀과 무관하다.
         try (var lock = dataSource.getConnection(); var statement = lock.createStatement()) {
             try (var row = statement.executeQuery("SELECT pg_try_advisory_lock(732019)")) {
@@ -75,6 +75,7 @@ public class LegalDataImportCommand {
                 case "embed" -> service.embed();
                 case "search-evaluate" -> LegalSearchEvaluation.run(new JdbcTemplate(dataSource), embeddings, mapper);
                 case "draft-evaluate" -> LegalDraftEvaluation.run(new JdbcTemplate(dataSource), config, mapper);
+                case "flow-evaluate" -> LegalFlowEvaluation.run(dataSource, config, mapper);
                 case "search-check" -> {
                     String query = "임대인이 집 수리를 해주지 않아 제가 수리비를 냈습니다. 돌려받을 수 있나요?";
                     String expanded = kr.co.legalai.legaldata.service.impl.HousingSearchTerms.expand(query);
