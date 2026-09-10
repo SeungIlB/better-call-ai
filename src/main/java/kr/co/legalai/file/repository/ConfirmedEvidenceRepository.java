@@ -31,4 +31,17 @@ public class ConfirmedEvidenceRepository {
                 .correctedText(row.getString("corrected_text")).confirmedAt(row.getTimestamp("confirmed_at").toInstant()).build(),
                 caseId, size + 1, ((long) page - 1) * size);
     }
+
+    public Optional<ConfirmedEvidenceResponse> findCurrent(UUID caseId, UUID fileId) {
+        return jdbc.query("""
+                SELECT f.id AS file_id, r.id AS revision_id, r.corrected_text, r.confirmed_at
+                FROM casework.files f JOIN casework.ocr_text_revisions r
+                  ON r.file_id=f.id AND r.id=f.current_ocr_revision_id
+                WHERE f.case_id=? AND f.id=? AND f.removed_at IS NULL
+                  AND r.is_current AND r.confirmed_at IS NOT NULL
+                """, (row, index) -> ConfirmedEvidenceResponse.builder()
+                .fileId(row.getObject("file_id", UUID.class)).revisionId(row.getObject("revision_id", UUID.class))
+                .correctedText(row.getString("corrected_text"))
+                .confirmedAt(row.getTimestamp("confirmed_at").toInstant()).build(), caseId, fileId).stream().findFirst();
+    }
 }

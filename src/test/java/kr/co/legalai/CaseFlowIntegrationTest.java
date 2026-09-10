@@ -2320,6 +2320,91 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
+    void caseEvidenceSearchRejectsUnauthorizedDraftAndStaleInputsBeforeEmbedding() throws Exception {
+        var fixture = ocrFixture();
+        String path = caseSearchPath(fixture);
+        String body = "{\"query\":\"집 수선\",\"expectedCaseVersion\":1}";
+        mockMvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        var other = registerTestUser();
+        mockMvc.perform(post(path).header("Authorization", "Bearer " + other.accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isNotFound());
+        UUID revision = saveOcr(fixture, 0, "확정 전 문서");
+        caseSearch(fixture, 1, 0).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("FILE_001"));
+        confirmOcr(fixture, revision).andExpect(status().isOk());
+        caseSearch(fixture, 1, 0).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CASE_002"));
+        caseSearch(fixture, 2, -1).andExpect(status().isBadRequest());
+        caseSearch(fixture, 2, 10000).andExpect(status().isBadRequest());
+        mockMvc.perform(post(path).header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"query\":\"집 수선\"}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(searchEmbeddings);
+    }
+
+    @Test
+    void caseEvidenceSearchUsesConfirmedExcerptAfterOriginalPurgeAndPreservesUnicode() throws Exception {
+        var fixture = ocrFixture();
+        String text = "가".repeat(649) + "😀끝";
+        UUID revision = saveOcr(fixture, 0, text);
+        confirmOcr(fixture, revision).andExpect(status().isOk());
+        saveOcr(fixture, 1, "미확정 새 초안");
+        assertTrue(!Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT 1", Integer.class));
+            List<String> inputs = call.getArgument(0);
+            assertEquals(1, inputs.size());
+            assertTrue(inputs.getFirst().contains("확정 문서 발췌:\n"));
+            assertTrue(inputs.getFirst().contains("가".repeat(649)) || inputs.getFirst().contains("😀끝"));
+            assertTrue(!inputs.getFirst().contains("미확정 새 초안"));
+            assertTrue(!inputs.getFirst().contains("기계가 읽은"));
+            return List.of(vector);
+        });
+        caseSearch(fixture, 2, 0).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.caseVersion").value(2))
+                .andExpect(jsonPath("$.data.evidence.revisionId").value(revision.toString()))
+                .andExpect(jsonPath("$.data.evidence.text").value("가".repeat(649)))
+                .andExpect(jsonPath("$.data.evidence.end").value(649))
+                .andExpect(jsonPath("$.data.evidence.totalLength").value(652))
+                .andExpect(jsonPath("$.data.evidence.partial").value(true));
+        caseSearch(fixture, 2, 650).andExpect(status().isBadRequest());
+        caseSearch(fixture, 2, 649).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.evidence.text").value("😀끝"))
+                .andExpect(jsonPath("$.data.evidence.end").value(652));
+        org.mockito.Mockito.verify(searchEmbeddings, org.mockito.Mockito.times(2)).embed(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void caseEvidenceSearchDiscardsResultsWhenCaseChangesOrIsDeletedDuringEmbedding() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "집 수리비 지급 내역")).andExpect(status().isOk());
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.doAnswer(call -> {
+            ocrUpdate("UPDATE casework.cases SET version_no=version_no+1 WHERE id=?", fixture.caseId());
+            return List.of(vector);
+        }).when(searchEmbeddings).embed(org.mockito.ArgumentMatchers.anyList());
+        caseSearch(fixture, 2, 0).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CASE_002"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+        org.mockito.Mockito.doAnswer(call -> {
+            ocrUpdate("UPDATE casework.cases SET deleted_at=now(), hard_delete_after=now()+interval '30 days' WHERE id=?", fixture.caseId());
+            return List.of(vector);
+        }).when(searchEmbeddings).embed(org.mockito.ArgumentMatchers.anyList());
+        caseSearch(fixture, 3, 0).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("CASE_001"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    private String caseSearchPath(OcrFixture fixture) {
+        return "/api/v1/cases/" + fixture.caseId() + "/files/" + fixture.fileId() + "/legal-evidence/search";
+    }
+
+    private org.springframework.test.web.servlet.ResultActions caseSearch(OcrFixture fixture, int version, int start) throws Exception {
+        return mockMvc.perform(post(caseSearchPath(fixture)).header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(java.util.Map.of(
+                        "query", "집 수선 근거", "expectedCaseVersion", version, "excerptStart", start))));
+    }
+
+    @Test
     void confirmedEvidenceEnforcesOwnershipDeletionAndPageBounds() throws Exception {
         var fixture = pendingOcrFixture();
         var other = registerTestUser();

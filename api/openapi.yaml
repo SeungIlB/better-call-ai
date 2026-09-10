@@ -8,6 +8,87 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /api/v1/cases/{caseId}/files/{fileId}/legal-evidence/search:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+      - name: fileId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: searchCaseEvidence
+      summary: 선택한 파일의 현재 확정 OCR 발췌로 법률 근거 후보 검색
+      description: >
+        내 사건의 현재 확정 수정본 1개에서 최대 650 UTF-16 코드 단위를 발췌해 질문과 함께 검색한다.
+        기본 발췌 시작은 0이며 전체 문서 검색이 아니다. 응답에 사용한 수정본 ID와 실제 발췌 범위를 표시한다.
+        질문과 발췌문은 용어 보완 후 OpenAI 임베딩으로 전송된다. 원본 파일·미확정 초안·다른 파일은 전송하지 않는다.
+        외부 호출 전후 소유권·사건 버전·현재 수정본을 확인한다. 도중 변경 시 결과를 폐기하지만 이미 수행한 호출 비용은 발생할 수 있다.
+        결과는 마지막 확인 시점의 버전 기준이며 응답 이후 변경을 막는 잠금은 아니다. 법률 답변 생성이나 결과 저장은 하지 않는다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query, expectedCaseVersion]
+              properties:
+                query: { type: string, minLength: 1, maxLength: 300, description: 공백만 입력할 수 없음 }
+                expectedCaseVersion: { type: integer, minimum: 1 }
+                excerptStart:
+                  type: [integer, 'null']
+                  minimum: 0
+                  description: 생략/null이면 0. 확정 수정본의 UTF-16 시작 위치이며 문자 중간이나 본문 끝 이후는 400
+      responses:
+        '200':
+          description: 현재 확정본 발췌와 근거 후보
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, const: true }
+                  traceId: { type: [string, 'null'] }
+                  data:
+                    type: object
+                    required: [caseId, caseVersion, evidence, results]
+                    properties:
+                      caseId: { type: string, format: uuid }
+                      caseVersion: { type: integer, minimum: 1 }
+                      evidence: { $ref: '#/components/schemas/EvidenceExcerpt' }
+                      results:
+                        type: object
+                        required: [items, page, pageSize, hasNext]
+                        properties:
+                          items:
+                            type: array
+                            maxItems: 8
+                            items: { $ref: '#/components/schemas/LegalEvidence' }
+                          page: { type: integer, const: 1 }
+                          pageSize: { type: integer, const: 8 }
+                          hasNext: { type: boolean, const: false }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: CASE_001 내 활성 사건이 아님 또는 FILE_001 해당 사건·파일에 사용 가능한 현재 확정 수정본이 없음
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '409':
+          description: CASE_002 사건 버전 불일치 또는 외부 호출 중 현재 확정본 변경·제거
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '429':
+          description: LEGAL_DATA_003 공통 검색 동시 처리 한도
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: COMMON_002 키 미설정 또는 LEGAL_DATA_002 검색 실패
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /api/v1/legal-evidence/search:
     post:
       operationId: searchLegalEvidence
@@ -701,6 +782,17 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ApiError' }
   schemas:
+    EvidenceExcerpt:
+      type: object
+      required: [fileId, revisionId, text, start, end, totalLength, partial]
+      properties:
+        fileId: { type: string, format: uuid }
+        revisionId: { type: string, format: uuid }
+        text: { type: string, maxLength: 650 }
+        start: { type: integer, minimum: 0, description: 확정 수정본 UTF-16 시작 위치(포함) }
+        end: { type: integer, minimum: 1, description: 확정 수정본 UTF-16 끝 위치(미포함) }
+        totalLength: { type: integer, minimum: 1, description: 확정 수정본 전체 UTF-16 길이 }
+        partial: { type: boolean, description: 앞이나 뒤에 사용하지 않은 본문이 있으면 true }
     LegalEvidence:
       type: object
       required: [chunkId, documentId, title, heading, content, sourceUrl, versionLabel, effectiveFrom, rankScore]
