@@ -30,4 +30,11 @@ class OcrAccuracyMetricsTest {
         assertFalse(score.passed());
         assertThrows(IllegalArgumentException.class, () -> OcrAccuracyMetrics.score(" ", "내용", List.of()));
     }
+
+    @Test void transliterationAndSimilarLookingCharactersRemainErrors() {
+        var score = OcrAccuracyMetrics.score("甲 生 AB-01", "갑 생 AB-O1", List.of("甲", "生", "AB-01"));
+        assertEquals(3, score.edits());
+        assertEquals(0, score.criticalMatched());
+        assertFalse(score.passed());
+    }
 }

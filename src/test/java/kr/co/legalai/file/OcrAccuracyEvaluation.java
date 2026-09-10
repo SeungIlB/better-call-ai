@@ -299,6 +299,19 @@ public class OcrAccuracyEvaluation {
         fixtures.add(image(root, "notice-holdout", render(notice, font, 23, false), "png", notice,
                 List.of("발신인: 서예준", "수신인: 오혜린", "계약 종료일: 2026.11.03.", "반환 요청액: 126,480,900원",
                         "반환 요청 기한: 2026.11.06. 오후 3시", "공제 합의액: 0원", "합의하지 않은 수선비를 공제하는 데 동의하지 않습니다.")));
+        String mixed = """
+                계약 부속표 (가상 평가 문서)
+                임대인 구분: 甲
+                임차인 구분: 乙
+                품명: 生맥주
+                호실: B동 101호
+                품목 코드: AB-01
+                금액: 18,070원
+                특약: 現狀 변경에 동의하지 않는다.
+                """;
+        fixtures.add(image(root, "mixed-script", render(mixed, font, 25, false), "png", mixed,
+                List.of("임대인 구분: 甲", "임차인 구분: 乙", "품명: 生맥주", "호실: B동 101호", "품목 코드: AB-01",
+                        "금액: 18,070원", "특약: 現狀 변경에 동의하지 않는다.")));
         return fixtures;
     }
 
