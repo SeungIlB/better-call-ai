@@ -39,7 +39,11 @@ public class LegalEvidenceSearchServiceImpl implements LegalEvidenceSearchServic
         if (!slots.tryAcquire()) throw new BusinessException(ErrorCode.LEGAL_SEARCH_BUSY);
         try {
             // 외부 호출 중 DB 트랜잭션·연결을 점유하지 않는다.
-            String searchQuery = "housing_lease".equals(disputeDomain) ? HousingSearchTerms.expand(query) : query.strip();
+            String searchQuery = switch (disputeDomain) {
+                case "housing_lease" -> HousingSearchTerms.expand(query);
+                case "vehicle_accident" -> VehicleSearchTerms.expand(query);
+                default -> query.strip();
+            };
             float[] vector = embeddings.embed(List.of(searchQuery)).getFirst();
             var matches = transactions.execute(id -> "housing_lease".equals(disputeDomain)
                     ? repository.search(searchQuery, vector) : repository.search(searchQuery, vector, disputeDomain));

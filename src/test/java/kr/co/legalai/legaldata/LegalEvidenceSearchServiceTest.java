@@ -47,6 +47,19 @@ class LegalEvidenceSearchServiceTest {
         verifyNoInteractions(embeddings, transactions, repository);
     }
 
+    @Test void vehicleDomainUsesVehicleSearchTermsAndDomainRepositoryPath() {
+        float[] vector = new float[1536]; vector[0] = 1;
+        when(embeddings.embed(anyList())).thenReturn(java.util.List.of(vector));
+        when(repository.search(anyString(), any(), eq("vehicle_accident"))).thenReturn(java.util.List.of());
+        when(transactions.execute(any())).thenAnswer(invocation -> {
+            java.util.function.Function<java.util.UUID, ?> action = invocation.getArgument(0);
+            return action.apply(java.util.UUID.randomUUID());
+        });
+        service.search("차량 수리비", "vehicle_accident");
+        verify(embeddings).embed(java.util.List.of("차량 수리비\n검색 보완어: 교통사고 자동차손해배상 도로교통법 손해배상 보험"));
+        verify(repository).search(anyString(), eq(vector), eq("vehicle_accident"));
+    }
+
     @Test void missingConfigurationAndProviderFailureAreDistinctAndSanitized() {
         doThrow(new IntegrationNotConfiguredException()).when(embeddings).requireConfigured();
         assertEquals(ErrorCode.INTEGRATION_NOT_CONFIGURED,
