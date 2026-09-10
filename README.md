@@ -363,6 +363,7 @@ docker compose ps clamav
 ```powershell
 docker compose up -d postgres
 .\gradlew.bat importLegalData --args=collect
+.\gradlew.bat importLegalData --args=collect-vehicle
 .\gradlew.bat importLegalData --args=embed
 .\gradlew.bat importLegalData --args=verify
 # 아래 명령은 고정 예시 질문 1건을 추가 임베딩하므로 과금된다.

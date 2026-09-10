@@ -23,13 +23,22 @@ public class LawImportServiceImpl implements LawImportService {
 
     @Override
     public void collect() {
-        for (String title : List.of("민법", "주택임대차보호법", "주택임대차보호법 시행령")) {
+        collect(List.of("민법", "주택임대차보호법", "주택임대차보호법 시행령"), "housing_lease");
+    }
+
+    @Override
+    public void collectVehicle() {
+        collect(List.of("민법", "도로교통법", "교통사고처리 특례법", "자동차손해배상 보장법"), "vehicle_accident");
+    }
+
+    private void collect(List<String> titles, String domain) {
+        for (String title : titles) {
             var matches = LawArticleParser.nodes(source.searchCurrentLaws(title).path("LawSearch").path("law"))
                     .stream().filter(row -> title.equals(row.path("법령명한글").asString())).toList();
             if (matches.size() != 1) throw new IllegalStateException("LAW_EXACT_MATCH_REQUIRED");
             var item = matches.getFirst();
             var law = parser.parse(title, item, source.findLawVersion(LawArticleParser.required(item, "법령일련번호"),
-                    LawArticleParser.required(item, "시행일자")));
+                    LawArticleParser.required(item, "시행일자")), domain);
             boolean inserted = Boolean.TRUE.equals(transactions.execute(status -> repository.save(law)));
             log.info("법령 적재 title={} version={} chunks={} inserted={}", title, law.versionLabel(), law.parts().size(), inserted);
         }

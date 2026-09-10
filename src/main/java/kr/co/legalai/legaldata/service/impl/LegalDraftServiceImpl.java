@@ -61,6 +61,8 @@ public class LegalDraftServiceImpl implements LegalDraftService {
             var draft = sources.isEmpty()
                     ? new GroundedAnswerRepository.Draft("검색된 법률 근거가 없어 안내 초안을 만들지 못했습니다.",
                             List.of(), List.of("분쟁 상황이나 다른 확정 문서 발췌를 확인해 주세요."))
+                    : "vehicle_accident".equals(first.disputeDomain())
+                    ? generator.generate("vehicle_accident", request.query(), combinedEvidence, sources.stream().distinct().toList())
                     : generator.generate(request.query(), combinedEvidence, sources.stream().distinct().toList());
             var conflicts = findConflicts(contexts);
             transactions.execute(userId -> {

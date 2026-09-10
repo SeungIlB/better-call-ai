@@ -51,7 +51,7 @@ public class CaseEvidenceSearchServiceImpl implements CaseEvidenceSearchService 
                 }
                 return true;
             });
-            return CaseEvidenceSearchResponse.builder().caseId(caseId).caseVersion(request.expectedCaseVersion())
+            return CaseEvidenceSearchResponse.builder().caseId(caseId).caseVersion(request.expectedCaseVersion()).disputeDomain(domain)
                     .evidence(excerpt).results(results).build();
         } catch (DataAccessException | TransactionException failure) {
             // SQL 예외에 OCR 본문이 포함될 수 있으므로 원문과 cause를 전달하지 않는다.

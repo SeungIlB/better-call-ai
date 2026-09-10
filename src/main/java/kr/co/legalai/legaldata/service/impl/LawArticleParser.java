@@ -23,11 +23,16 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class LawArticleParser {
     public static final Map<String, String> TARGETS = Map.of(
-            "민법", "001706", "주택임대차보호법", "001248", "주택임대차보호법 시행령", "004950");
+            "민법", "001706", "주택임대차보호법", "001248", "주택임대차보호법 시행령", "004950",
+            "도로교통법", "001638", "교통사고처리 특례법", "001131", "자동차손해배상 보장법", "001746");
     private static final Set<Integer> RELATED_CIVIL_ARTICLES = Set.of(390, 393, 536, 543, 544, 548, 550, 580);
     private final ObjectMapper mapper;
 
     public CollectedLaw parse(String title, JsonNode item, JsonNode response) {
+        return parse(title, item, response, "housing_lease");
+    }
+
+    public CollectedLaw parse(String title, JsonNode item, JsonNode response, String domain) {
         String expectedId = TARGETS.get(title);
         String id = required(item, "법령ID");
         String serial = required(item, "법령일련번호");
@@ -62,16 +67,16 @@ public class LawArticleParser {
             LocalDate starts = LocalDate.parse(articleDate, DateTimeFormatter.BASIC_ISO_DATE);
             int articleNo = Integer.parseInt(number);
             boolean selected = !deleted && !starts.isAfter(LocalDate.now(java.time.ZoneOffset.UTC))
-                    && (!id.equals("001706") || (articleNo >= 618 && articleNo <= 654)
-                    || RELATED_CIVIL_ARTICLES.contains(articleNo));
+                    && ("vehicle_accident".equals(domain) ? (!id.equals("001706") || RELATED_CIVIL_ARTICLES.contains(articleNo))
+                    : (!id.equals("001706") || (articleNo >= 618 && articleNo <= 654) || RELATED_CIVIL_ARTICLES.contains(articleNo)));
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("article_key", key);
             metadata.put("article_number", number);
             metadata.put("article_branch", branch);
             metadata.put("effective_from", starts.toString());
             metadata.put("deleted", deleted);
-            metadata.put("topic_tags", selected ? List.of("housing_lease") : List.of());
-            metadata.put("selection_rule", "housing-lease-v1");
+            metadata.put("topic_tags", selected ? List.of(domain) : List.of());
+            metadata.put("selection_rule", domain + "-v1");
             addParts(parts, title + " " + heading, "article", text, metadata);
         }
         if (articleKeys.isEmpty()) throw invalid();

@@ -48,6 +48,15 @@ public class GroundedAnswerRepository {
     private final ObjectMapper mapper;
 
     public Draft generate(String question, EvidenceExcerptResponse evidence, List<LegalEvidenceResponse> sources) {
+        return generateWithInstructions(INSTRUCTIONS, question, evidence, sources);
+    }
+
+    public Draft generate(String disputeDomain, String question, EvidenceExcerptResponse evidence, List<LegalEvidenceResponse> sources) {
+        String domainName = "vehicle_accident".equals(disputeDomain) ? "차량 사고" : "주택 임대차";
+        return generateWithInstructions(INSTRUCTIONS.replace("주택 임대차", domainName), question, evidence, sources);
+    }
+
+    private Draft generateWithInstructions(String instructions, String question, EvidenceExcerptResponse evidence, List<LegalEvidenceResponse> sources) {
         try {
             var inputs = new ArrayList<Map<String, Object>>();
             for (int i = 0; i < sources.size(); i++) {
@@ -57,7 +66,7 @@ public class GroundedAnswerRepository {
             }
             String input = mapper.writeValueAsString(Map.of("question", question, "evidence", evidence, "sources", inputs,
                     "referenceDate", LocalDate.now(ZoneId.of("Asia/Seoul")).toString()));
-            var result = openAi.generateStructured(INSTRUCTIONS, input, schema());
+            var result = openAi.generateStructured(instructions, input, schema());
             return parse(result.text(), sources);
         } catch (BusinessException failure) {
             if (failure.getErrorCode() == ErrorCode.INTEGRATION_NOT_CONFIGURED) throw failure;
