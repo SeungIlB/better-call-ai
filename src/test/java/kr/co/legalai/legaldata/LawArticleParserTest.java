@@ -57,6 +57,15 @@ class LawArticleParserTest {
     }
 
     @Test
+    void assaultDomainTagsCriminalLawArticlesSeparately() {
+        String item = "{\"법령ID\":\"001692\",\"법령일련번호\":\"123\",\"시행일자\":\"20260101\",\"법령명한글\":\"형법\",\"현행연혁코드\":\"현행\"}";
+        String body = BODY.replace("001706", "001692").replace("민법", "형법");
+        var law = parser.parse("형법", mapper.readTree(item), mapper.readTree(body), "assault");
+        assertEquals(java.util.List.of("assault"), law.parts().getFirst().metadata().get("topic_tags"));
+        assertEquals("assault-v1", law.parts().getFirst().metadata().get("selection_rule"));
+    }
+
+    @Test
     void splittingPreservesEveryUnicodeCharacterWithinByteLimit() {
         String input = "한글😀 조문\n".repeat(2000);
         var parts = LawArticleParser.split(input, 5500);

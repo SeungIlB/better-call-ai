@@ -33,7 +33,7 @@ public class LegalDataImportCommand {
     }
 
     private static void run(String[] args) throws Exception {
-        if (args.length != 1 || !List.of("collect", "collect-vehicle", "embed", "verify", "search-check", "search-vehicle-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
+        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
             throw new IllegalStateException("INVALID_LEGAL_DATA_COMMAND");
         }
         Map<String, String> config = new HashMap<>();
@@ -54,8 +54,8 @@ public class LegalDataImportCommand {
         }
         var dataSource = new DriverManagerDataSource(url, required(config, "DATABASE_MIGRATION_USER"),
                 required(config, "DATABASE_MIGRATION_PASSWORD"));
-        if (List.of("collect", "collect-vehicle").contains(args[0])) required(config, "LAW_OPEN_DATA_OC");
-        if (List.of("embed", "search-check", "search-vehicle-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) required(config, "OPENAI_API_KEY");
+        if (List.of("collect", "collect-vehicle", "collect-assault").contains(args[0])) required(config, "LAW_OPEN_DATA_OC");
+        if (List.of("embed", "search-check", "search-vehicle-check", "search-assault-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) required(config, "OPENAI_API_KEY");
         // 별도 세션 잠금으로 동시 운영 명령의 중복 생성·과금을 방지한다. 사용자 요청용 풀과 무관하다.
         try (var lock = dataSource.getConnection(); var statement = lock.createStatement()) {
             try (var row = statement.executeQuery("SELECT pg_try_advisory_lock(732019)")) {
@@ -73,10 +73,12 @@ public class LegalDataImportCommand {
             switch (args[0]) {
                 case "collect" -> service.collect();
                 case "collect-vehicle" -> service.collectVehicle();
+                case "collect-assault" -> service.collectAssault();
                 case "embed" -> service.embed();
                 case "search-evaluate" -> LegalSearchEvaluation.run(new JdbcTemplate(dataSource), embeddings, mapper);
                 case "draft-evaluate" -> LegalDraftEvaluation.run(new JdbcTemplate(dataSource), config, mapper);
                 case "vehicle-draft-evaluate" -> VehicleDraftEvaluation.run(new JdbcTemplate(dataSource), config, mapper);
+                case "assault-draft-evaluate" -> AssaultDraftEvaluation.run(new JdbcTemplate(dataSource), config, mapper);
                 case "flow-evaluate" -> LegalFlowEvaluation.run(dataSource, config, mapper);
                 case "flow-evaluate-new" -> LegalFlowEvaluation.run(dataSource, config, mapper, true);
                 case "search-check" -> {
@@ -96,6 +98,15 @@ public class LegalDataImportCommand {
                     new kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository(new JdbcTemplate(dataSource))
                             .search(expanded, vector, "vehicle_accident").forEach(item -> System.out.println(
                                     "VEHICLE heading=" + item.heading() + " rankScore=" + item.rankScore()
+                                            + " source=" + item.sourceUrl()));
+                }
+                case "search-assault-check" -> {
+                    String query = "폭행을 당해 상해 진단서를 발급받았습니다. 고소 전에 무엇을 확인해야 하나요?";
+                    String expanded = kr.co.legalai.legaldata.service.impl.AssaultSearchTerms.expand(query);
+                    var vector = embeddings.embed(List.of(expanded)).getFirst();
+                    new kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository(new JdbcTemplate(dataSource))
+                            .search(expanded, vector, "assault").forEach(item -> System.out.println(
+                                    "ASSAULT heading=" + item.heading() + " rankScore=" + item.rankScore()
                                             + " source=" + item.sourceUrl()));
                 }
                 default -> { }

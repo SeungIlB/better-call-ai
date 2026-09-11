@@ -24,7 +24,8 @@ import java.util.Set;
 public class LawArticleParser {
     public static final Map<String, String> TARGETS = Map.of(
             "민법", "001706", "주택임대차보호법", "001248", "주택임대차보호법 시행령", "004950",
-            "도로교통법", "001638", "교통사고처리 특례법", "001131", "자동차손해배상 보장법", "001746");
+            "도로교통법", "001638", "교통사고처리 특례법", "001131", "자동차손해배상 보장법", "001746",
+            "형법", "001692");
     private static final Set<Integer> RELATED_CIVIL_ARTICLES = Set.of(390, 393, 536, 543, 544, 548, 550, 580);
     private final ObjectMapper mapper;
 
@@ -67,7 +68,7 @@ public class LawArticleParser {
             LocalDate starts = LocalDate.parse(articleDate, DateTimeFormatter.BASIC_ISO_DATE);
             int articleNo = Integer.parseInt(number);
             boolean selected = !deleted && !starts.isAfter(LocalDate.now(java.time.ZoneOffset.UTC))
-                    && ("vehicle_accident".equals(domain) ? (!id.equals("001706") || RELATED_CIVIL_ARTICLES.contains(articleNo))
+                    && ("vehicle_accident".equals(domain) || "assault".equals(domain) ? (!id.equals("001706") || RELATED_CIVIL_ARTICLES.contains(articleNo))
                     : (!id.equals("001706") || (articleNo >= 618 && articleNo <= 654) || RELATED_CIVIL_ARTICLES.contains(articleNo)));
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("article_key", key);

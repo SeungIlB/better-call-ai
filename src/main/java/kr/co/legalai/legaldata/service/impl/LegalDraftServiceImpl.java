@@ -63,6 +63,8 @@ public class LegalDraftServiceImpl implements LegalDraftService {
                             List.of(), List.of("분쟁 상황이나 다른 확정 문서 발췌를 확인해 주세요."))
                     : "vehicle_accident".equals(first.disputeDomain())
                     ? generator.generate("vehicle_accident", request.query(), combinedEvidence, sources.stream().distinct().toList())
+                    : "assault".equals(first.disputeDomain())
+                    ? generator.generate("assault", request.query(), combinedEvidence, sources.stream().distinct().toList())
                     : generator.generate(request.query(), combinedEvidence, sources.stream().distinct().toList());
             var conflicts = findConflicts(contexts);
             transactions.execute(userId -> {

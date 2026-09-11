@@ -364,7 +364,9 @@ docker compose ps clamav
 docker compose up -d postgres
 .\gradlew.bat importLegalData --args=collect
 .\gradlew.bat importLegalData --args=collect-vehicle
+.\gradlew.bat importLegalData --args=collect-assault
 .\gradlew.bat importLegalData --args=vehicle-draft-evaluate
+.\gradlew.bat importLegalData --args=assault-draft-evaluate
 .\gradlew.bat importLegalData --args=embed
 .\gradlew.bat importLegalData --args=verify
 # 아래 명령은 고정 예시 질문 1건을 추가 임베딩하므로 과금된다.
@@ -372,8 +374,12 @@ docker compose up -d postgres
 ```
 
 - `collect`: 기존 Flyway 마이그레이션 적용 후 현행 법령 3개를 수집한다. 제목과 공식 ID를 함께 대조하고 목록의 MST·시행일에 해당하는 본문을 가져온다. OpenAI는 호출하지 않는다.
+- `collect-vehicle`: 도로교통법·교통사고처리 특례법·자동차손해배상 보장법 및 관련 민법 조문을 차량 사고 태그로 수집한다.
+- `collect-assault`: 형법 및 폭행 관련 민법 조문을 폭행 태그로 수집한다.
 - `embed`: `text-embedding-3-small`의 1,536차원 벡터를 `knowledge.chunk_embeddings`에 저장한다. 시스템 프롬프트 없이 공개 조문만 보낸다. 한 요청 최대 16조각, 각 입력 최대 6,000 UTF-8 바이트이며 원문 전체를 임베딩하지 않는다.
 - `verify`: 적재·선별·임베딩 개수를 조회한다. 외부 API는 호출하지 않는다.
+- `search-vehicle-check`, `search-assault-check`: 각 분야의 고정 질문으로 태그 분리 검색을 확인한다.
+- `vehicle-draft-evaluate`, `assault-draft-evaluate`: 실제 OpenAI 검색·생성 평가를 실행하고 `build/`에 보고서를 만든다. 실행 시 API 비용이 발생한다.
 - 명령은 저장소 루트의 `.env`를 직접 읽으며 localhost/127.0.0.1의 5433 `legal_ai` DB만 허용한다. 별도 운영 연결과 DB 잠금으로 명령 동시 실행을 차단한다. 웹 API나 자동 스케줄러는 추가하지 않았으며 일반 앱 역할의 지식 DB 읽기 전용 권한도 유지한다.
 
 ### 2026-09-09 실제 적재 결과

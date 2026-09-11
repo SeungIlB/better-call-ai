@@ -67,4 +67,19 @@
 재실행: `./gradlew.bat importLegalData --args=vehicle-draft-evaluate` (실제 OpenAI 비용 발생).
 
 한계: 4개 가상 질문과 현재 법령만 사용했으며, 판례·실제 보험 약관·전문가 검토·반복 안정성은 확인하지 않았다.
+
+## 7. 폭행 법령 적재·검색 — 완료
+
+형법과 폭행 관련 민법 조문을 `assault` 태그로 수집·임베딩하는 `collect-assault` 경로를 추가했다. 실제 로컬 수집에서 형법 394개, 관련 민법 44개 조문을 선택했고 임베딩을 완료했다. 폭행 질문의 검색 결과는 형법 조문만 반환하며 차량·주택 법령이 섞이지 않는다. 기준 법령은 국가법령정보센터의 [형법](https://www.law.go.kr/LSW/lsInfoP.do?lsiSeq=284025) 원문을 사용한다.
+
+검증: `search-assault-check` 실제 실행, Java 전체 테스트, UI 테스트, OpenAPI YAML 파싱, `git diff --check`.
+
+## 8. 폭행 생성 평가 — 완료
+
+상해를 동반한 폭행, 고소 전 자료 준비, 프롬프트 삽입이 섞인 3개 질문으로 실제 폭행 코퍼스 검색·OpenAI 생성을 실행한다. 생성 프롬프트는 폭행 분야로 전달하고, 책임·유죄·승소를 단정하지 않으며 진단서·사진·영상·목격자 등 확인 자료를 질문하도록 검증한다.
+
+보고서: `build/assault-draft-evaluation/<timestamp>/report.json`.
+재실행: `./gradlew.bat importLegalData --args=assault-draft-evaluate` (실제 OpenAI 비용 발생).
+
+한계: 현재는 형법·민법 조문 중심이며 판례, 수사기관 절차의 최신 안내, 전문가 검토, 반복 안정성은 후속 범위다.
 - Java·Node·UI·OpenAPI·diff 검증 후 로컬 커밋한다.

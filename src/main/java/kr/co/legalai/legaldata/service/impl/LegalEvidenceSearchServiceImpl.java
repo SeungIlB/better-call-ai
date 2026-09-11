@@ -42,6 +42,7 @@ public class LegalEvidenceSearchServiceImpl implements LegalEvidenceSearchServic
             String searchQuery = switch (disputeDomain) {
                 case "housing_lease" -> HousingSearchTerms.expand(query);
                 case "vehicle_accident" -> VehicleSearchTerms.expand(query);
+                case "assault" -> AssaultSearchTerms.expand(query);
                 default -> query.strip();
             };
             float[] vector = embeddings.embed(List.of(searchQuery)).getFirst();
