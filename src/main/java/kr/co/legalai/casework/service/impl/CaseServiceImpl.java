@@ -72,6 +72,8 @@ public class CaseServiceImpl implements CaseService {
             int updatedRows = caseRepository.update(
                     caseId,
                     request.originalStatement(),
+                    request.userPartyRole(),
+                    request.userGoal(),
                     request.expectedVersion()
             );
             if (updatedRows == 0) {

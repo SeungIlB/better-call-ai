@@ -1254,6 +1254,8 @@ components:
       properties:
         originalStatement: { type: string, minLength: 1, maxLength: 50000 }
         expectedVersion: { type: integer, minimum: 1 }
+        userPartyRole: { type: [string, 'null'], maxLength: 40, description: 생략하면 기존 역할 유지 }
+        userGoal: { type: [string, 'null'], maxLength: 2000, description: 생략하면 기존 목표 유지 }
     Case:
       type: object
       required: [id, title, disputeDomain, status, version, createdAt, updatedAt]
