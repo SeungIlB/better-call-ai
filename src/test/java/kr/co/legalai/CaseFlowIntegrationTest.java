@@ -2034,7 +2034,8 @@ class CaseFlowIntegrationTest {
         retryChat(owner, caseId, failedKey, 1).andExpect(status().isConflict());
         org.mockito.ArgumentCaptor<List<kr.co.legalai.chat.entity.ChatInput>> capture = org.mockito.ArgumentCaptor.captor();
         org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(8)).generate(capture.capture());
-        assertEquals(11, capture.getValue().size()); // 완성된 5턴(10메시지) + 현재 질문
+        assertEquals(12, capture.getValue().size()); // 사건 초기 진술 + 완성된 5턴(10메시지) + 현재 질문
+        assertTrue(capture.getValue().stream().anyMatch(input -> input.content().contains("계약서 누수 분쟁")));
         mockMvc.perform(get("/api/v1/cases/{id}/chat/turns", caseId).param("pageSize", "2")
                 .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(jsonPath("$.data.items.length()").value(2)).andExpect(jsonPath("$.data.hasNext").value(true));

@@ -7,6 +7,8 @@ import kr.co.legalai.chat.entity.GeneratedAnswer;
 import kr.co.legalai.chat.repository.ChatRepository;
 import kr.co.legalai.chat.repository.OpenAiChatRepository;
 import kr.co.legalai.chat.service.ChatService;
+import kr.co.legalai.casework.entity.CaseEntity;
+import kr.co.legalai.casework.repository.CaseRepository;
 import kr.co.legalai.common.exception.BusinessException;
 import kr.co.legalai.common.exception.ErrorCode;
 import kr.co.legalai.common.response.PageResponse;
@@ -33,6 +35,7 @@ public class ChatServiceImpl implements ChatService {
     private final ChatRepository repository;
     private final OpenAiChatRepository openAi;
     private final ConfirmedEvidenceRepository confirmedEvidence;
+    private final CaseRepository cases;
     // 상품별 일일 한도가 아니라 인스턴스의 외부 호출 동시 실행 보호다.
     private final Semaphore slots = new Semaphore(2);
 
@@ -128,10 +131,12 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private List<ChatInput> context(UUID caseId, ChatTurn current) {
+        List<ChatInput> caseContext = caseContext(caseId);
         List<ChatInput> evidence = evidenceContext(caseId);
-        int evidenceLength = evidence.stream().mapToInt(input -> input.content().length()).sum();
+        int fixedLength = caseContext.stream().mapToInt(input -> input.content().length()).sum()
+                + evidence.stream().mapToInt(input -> input.content().length()).sum();
         List<ChatTurn> selected = new ArrayList<>();
-        int remaining = Math.max(0, 16000 - current.question().length() - evidenceLength);
+        int remaining = Math.max(0, 16000 - current.question().length() - fixedLength);
         for (ChatTurn previous : repository.context(caseId, current.turnNo())) {
             int length = previous.question().length() + previous.answer().length();
             if (length > remaining) break;
@@ -143,9 +148,22 @@ public class ChatServiceImpl implements ChatService {
             inputs.add(new ChatInput("user", previous.question()));
             inputs.add(new ChatInput("assistant", previous.answer()));
         }
+        inputs.addAll(caseContext);
         inputs.addAll(evidence);
         inputs.add(new ChatInput("user", current.question()));
         return List.copyOf(inputs);
+    }
+
+    private List<ChatInput> caseContext(UUID caseId) {
+        CaseEntity current = cases.findById(caseId).orElse(null);
+        if (current == null || ((current.originalStatement() == null || current.originalStatement().isBlank())
+                && (current.userGoal() == null || current.userGoal().isBlank()))) return List.of();
+        String statement = current.originalStatement() == null ? "" : current.originalStatement();
+        String goal = current.userGoal() == null ? "" : current.userGoal();
+        String content = "사건 작성 시 사용자가 입력한 초기 상황과 목표입니다. 검증된 사실이 아닌 사용자 진술로 취급하세요.\n"
+                + "상황: " + statement.substring(0, Math.min(statement.length(), 4000)) + "\n"
+                + "목표: " + goal.substring(0, Math.min(goal.length(), 1000));
+        return List.of(new ChatInput("user", content));
     }
 
     private List<ChatInput> evidenceContext(UUID caseId) {
