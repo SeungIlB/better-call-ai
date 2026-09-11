@@ -9,6 +9,8 @@ import tools.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.HashMap;
+import java.util.regex.Pattern;
 
 /** 쓰기 호출은 운영 명령의 migration 연결 + 트랜잭션에서만 수행한다. 앱 DB 역할은 계속 읽기 전용이다. */
 @Repository
@@ -58,7 +60,30 @@ public class LawImportRepository {
                 INSERT INTO knowledge.legal_chunks(document_id, chunk_type, heading_path, content, ordinal, metadata)
                 VALUES (?, ?, ARRAY[?]::text[], ?, ?, ?::jsonb)
                 """, rows);
+        saveArticleRelations(document);
         return true;
+    }
+
+    private void saveArticleRelations(UUID documentId) {
+        var chunks = jdbc.query("SELECT id, heading_path[1] AS heading, content FROM knowledge.legal_chunks WHERE document_id=?",
+                (rs, row) -> new ArticleChunk(rs.getObject("id", UUID.class), rs.getString("heading"), rs.getString("content")), documentId);
+        var byArticle = new HashMap<String, UUID>();
+        for (var chunk : chunks) {
+            var match = Pattern.compile("제\\s*(\\d+)\\s*조").matcher(chunk.heading());
+            if (match.find()) byArticle.putIfAbsent(match.group(1), chunk.id());
+        }
+        var rows = new java.util.ArrayList<Object[]>();
+        for (var source : chunks) {
+            var matcher = Pattern.compile("제\\s*(\\d+)\\s*조").matcher(source.content());
+            while (matcher.find()) {
+                UUID target = byArticle.get(matcher.group(1));
+                if (target != null && !target.equals(source.id())) rows.add(new Object[]{source.id(), target, "cites", 1.0});
+            }
+        }
+        if (!rows.isEmpty()) jdbc.batchUpdate("""
+                INSERT INTO knowledge.legal_relations(source_chunk_id, target_chunk_id, relation_type, confidence)
+                VALUES (?, ?, ?, ?) ON CONFLICT (source_chunk_id, target_chunk_id, relation_type) DO NOTHING
+                """, rows);
     }
 
     public List<EmbeddingInput> pendingEmbeddings(String model, int limit) {
@@ -129,4 +154,6 @@ public class LawImportRepository {
     }
 
     public record EmbeddingInput(UUID id, String content, String hash) { }
+
+    private record ArticleChunk(UUID id, String heading, String content) { }
 }
