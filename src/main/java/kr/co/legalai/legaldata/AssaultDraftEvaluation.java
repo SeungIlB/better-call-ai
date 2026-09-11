@@ -33,7 +33,10 @@ public final class AssaultDraftEvaluation {
                 String query = AssaultSearchTerms.expand(example.question());
                 var sources = search.search(query, embeddings.embed(List.of(query)).getFirst(), "assault");
                 var evidence = EvidenceExcerptResponse.builder().text(example.evidence()).start(0).end(example.evidence().length()).totalLength(example.evidence().length()).partial(false).build();
-                row.put("sourceCount", sources.size()); row.put("draft", generator.generate("assault", example.question(), evidence, sources)); row.put("acceptedByServer", true); row.put("manualReview", "pending");
+                var draft = generator.generate("assault", example.question(), evidence, sources);
+                row.put("sourceCount", sources.size()); row.put("draft", draft); row.put("acceptedByServer", true); row.put("manualReview", "pending");
+                row.put("containsResponsibilityClaim", (draft.summary() + draft.findings().stream().map(finding -> finding.explanation()).reduce("", String::concat) + draft.questions())
+                        .matches("(?s).*(유죄 확정|가해자라고 단정|책임이 확정|승소율\\s*100%).*"));
             } catch (RuntimeException failure) { row.put("acceptedByServer", false); row.put("error", "GENERATION_FAILED"); }
             rows.add(row); root.write(mapper, rows);
             System.out.println(example.id() + " accepted=" + row.get("acceptedByServer") + " sources=" + row.get("sourceCount"));
