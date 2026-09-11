@@ -74,6 +74,8 @@ class OpenAiChatRepositoryTest {
         assertTrue(instructions.contains("불확실성·안전 안내를 생략하지 않는다"));
         assertEquals("user", sent.get().path("input").get(0).path("role").asString());
         assertTrue(sent.get().path("instructions").asString().contains("법령·조문·사건번호·출처 링크를 생성하지 않는다"));
+        assertTrue(sent.get().path("instructions").asString().contains("차량 사고"));
+        assertTrue(sent.get().path("instructions").asString().contains("폭행"));
         assertFalse(sent.get().has("tools"));
     }
 
