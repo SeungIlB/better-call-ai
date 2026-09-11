@@ -1864,6 +1864,19 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
+    void chatReceivesOnlyConfirmedEvidenceAsReviewContext() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "확정된 누수 자료")).andExpect(status().isOk());
+        stubChat();
+        sendChat(fixture.owner(), fixture.caseId(), UUID.randomUUID(), "이 자료에서 확인할 점은 무엇인가요?")
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<List<kr.co.legalai.chat.entity.ChatInput>> capture = org.mockito.ArgumentCaptor.captor();
+        org.mockito.Mockito.verify(openAiChat).generate(capture.capture());
+        assertTrue(capture.getValue().stream().anyMatch(input -> input.content().contains("확정된 누수 자료")));
+        assertTrue(capture.getValue().stream().anyMatch(input -> input.content().contains("진위·법적 효력·완전성은 확인되지 않은 주장 자료")));
+    }
+
+    @Test
     void chatEnforcesOwnershipForSendListAndRetryAndDatabaseRls() throws Exception {
         var owner = registerTestUser();
         var other = registerTestUser();

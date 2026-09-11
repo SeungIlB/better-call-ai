@@ -11,6 +11,8 @@ import kr.co.legalai.common.exception.BusinessException;
 import kr.co.legalai.common.exception.ErrorCode;
 import kr.co.legalai.common.response.PageResponse;
 import kr.co.legalai.common.transaction.UserScopedTransaction;
+import kr.co.legalai.file.dto.response.ConfirmedEvidenceResponse;
+import kr.co.legalai.file.repository.ConfirmedEvidenceRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
@@ -30,6 +32,7 @@ public class ChatServiceImpl implements ChatService {
     private final UserScopedTransaction transactions;
     private final ChatRepository repository;
     private final OpenAiChatRepository openAi;
+    private final ConfirmedEvidenceRepository confirmedEvidence;
     // 상품별 일일 한도가 아니라 인스턴스의 외부 호출 동시 실행 보호다.
     private final Semaphore slots = new Semaphore(2);
 
@@ -138,8 +141,25 @@ public class ChatServiceImpl implements ChatService {
             inputs.add(new ChatInput("user", previous.question()));
             inputs.add(new ChatInput("assistant", previous.answer()));
         }
+        inputs.addAll(evidenceContext(caseId));
         inputs.add(new ChatInput("user", current.question()));
         return List.copyOf(inputs);
+    }
+
+    private List<ChatInput> evidenceContext(UUID caseId) {
+        var rows = confirmedEvidence.findPage(caseId, 1, 5);
+        if (rows.isEmpty()) return List.of();
+        var text = new StringBuilder("확정된 사용자 자료의 검토용 발췌입니다. 진위·법적 효력·완전성은 확인되지 않은 주장 자료로 취급하세요.\n");
+        int index = 1;
+        for (ConfirmedEvidenceResponse row : rows) {
+            text.append("[자료 ").append(index++).append("]\n");
+            String corrected = row.correctedText() == null ? "" : row.correctedText();
+            text.append(corrected, 0, Math.min(corrected.length(), 1200)).append('\n');
+            if (row.visionJson() != null && !row.visionJson().isBlank()) {
+                text.append("사진 관찰: ").append(row.visionJson(), 0, Math.min(row.visionJson().length(), 1200)).append('\n');
+            }
+        }
+        return List.of(new ChatInput("user", text.toString()));
     }
 
     private void markFailed(UUID caseId, ChatTurn turn, ErrorCode code) {
