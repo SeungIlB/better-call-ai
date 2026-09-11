@@ -11,6 +11,11 @@ const labels = { DRAFT:'작성 중', COLLECTING:'자료 수집', REVIEW_READY:'�
   UPLOADED:'업로드 완료', PROCESSING:'인식 중', REVIEW_REQUIRED:'확인 필요', CONFIRMED:'확정 완료', PURGED:'원본 삭제 완료', FAILED:'실패' };
 const domainLabels = {housing_lease:'주택 임대차', vehicle_accident:'차량 사고', assault:'폭행'};
 const domainRoles = {housing_lease:['임차인','임대인'], vehicle_accident:['운전자','차량 소유자','탑승자','보행자'], assault:['피해 주장자','상대방','목격자']};
+const domainExamples = {
+  housing_lease: {title:'예: 월셋집 천장 누수 수리', statement:'언제, 어디서, 어떤 일이 있었는지 적어 주세요. 모르는 사실은 미확인이라고 남겨도 괜찮아요.', goal:'예: 누수 원인을 확인하고 수리 일정을 협의하고 싶어요.'},
+  vehicle_accident: {title:'예: 교차로 차량 충돌 사고', statement:'사고 일시·장소, 차량 움직임, 파손·부상과 확인되지 않은 내용을 적어 주세요.', goal:'예: 사고 자료를 정리하고 보험사에 확인할 내용을 알고 싶어요.'},
+  assault: {title:'예: 말다툼 중 신체 접촉', statement:'발생 일시·장소, 각자의 행동, 부상·목격자와 확인되지 않은 내용을 적어 주세요.', goal:'예: 보유 자료를 정리하고 추가로 확인할 내용을 알고 싶어요.'}
+};
 function toast(message, error = false) {
   const node = document.querySelector('#notice'); clearTimeout(toastTimer);
   node.textContent = message; node.className = `toast${error ? ' error' : ''}`; node.hidden = false;
@@ -65,6 +70,13 @@ function newCase() {
 function updateCaseRoles(domain) {
   const select = document.querySelector('#case-role'); if (!select) return;
   select.innerHTML = (domainRoles[domain] || domainRoles.housing_lease).map(role => `<option value="${esc(role)}">${esc(role)}</option>`).join('');
+  const example = domainExamples[domain] || domainExamples.housing_lease;
+  const title = document.querySelector('#case-form [name="title"]');
+  const statement = document.querySelector('#case-form [name="originalStatement"]');
+  const goal = document.querySelector('#case-form [name="userGoal"]');
+  if (title) title.placeholder = example.title;
+  if (statement) statement.placeholder = example.statement;
+  if (goal) goal.placeholder = example.goal;
 }
 async function openCase(id) {
   clearPreview(); current = await api(`/cases/${id}`); pendingAnalysis = null; analysisInput = null; selectedAnalysis = null; savedMessage = ''; selectedFile = null; ocr = null;
