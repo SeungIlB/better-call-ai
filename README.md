@@ -365,6 +365,7 @@ docker compose up -d postgres
 .\gradlew.bat importLegalData --args=collect
 .\gradlew.bat importLegalData --args=collect-vehicle
 .\gradlew.bat importLegalData --args=collect-assault
+.\gradlew.bat importLegalData --args=collect-all
 .\gradlew.bat importLegalData --args=vehicle-draft-evaluate
 .\gradlew.bat importLegalData --args=assault-draft-evaluate
 .\gradlew.bat importLegalData --args=embed
@@ -376,6 +377,7 @@ docker compose up -d postgres
 - `collect`: 기존 Flyway 마이그레이션 적용 후 현행 법령 3개를 수집한다. 제목과 공식 ID를 함께 대조하고 목록의 MST·시행일에 해당하는 본문을 가져온다. OpenAI는 호출하지 않는다.
 - `collect-vehicle`: 도로교통법·교통사고처리 특례법·자동차손해배상 보장법 및 관련 민법 조문을 차량 사고 태그로 수집한다.
 - `collect-assault`: 형법 및 폭행 관련 민법 조문을 폭행 태그로 수집한다.
+- `collect-all`: 위 세 분야 수집을 순서대로 실행한다. 적재 후 `embed`를 별도로 실행한다.
 - `embed`: `text-embedding-3-small`의 1,536차원 벡터를 `knowledge.chunk_embeddings`에 저장한다. 시스템 프롬프트 없이 공개 조문만 보낸다. 한 요청 최대 16조각, 각 입력 최대 6,000 UTF-8 바이트이며 원문 전체를 임베딩하지 않는다.
 - `verify`: 적재·선별·임베딩 개수를 조회한다. 외부 API는 호출하지 않는다.
 - `search-vehicle-check`, `search-assault-check`: 각 분야의 고정 질문으로 태그 분리 검색을 확인한다.
