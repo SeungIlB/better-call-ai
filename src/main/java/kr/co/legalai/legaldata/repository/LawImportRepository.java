@@ -68,7 +68,7 @@ public class LawImportRepository {
                 JOIN knowledge.legal_documents d ON d.id=c.document_id
                 JOIN knowledge.legal_sources s ON s.id=d.source_id
                 WHERE s.source_code='LAW_GO_KR_EFLAW' AND d.is_current
-                  AND (c.metadata->'topic_tags') @> '["housing_lease"]'::jsonb
+                  AND jsonb_array_length(c.metadata->'topic_tags') > 0
                   AND NOT EXISTS (SELECT 1 FROM knowledge.chunk_embeddings e WHERE e.chunk_id=c.id
                     AND e.embedding_model=? AND e.content_hash=c.metadata->>'content_hash')
                 ORDER BY d.external_id, c.ordinal LIMIT ?
@@ -92,7 +92,7 @@ public class LawImportRepository {
         return jdbc.queryForList("""
                 SELECT d.title, d.version_label, d.law_kind, d.effective_from, d.is_current,
                     count(DISTINCT c.id) AS chunks,
-                    count(DISTINCT c.id) FILTER (WHERE (c.metadata->'topic_tags') @> '["housing_lease"]') AS selected_chunks,
+                    count(DISTINCT c.id) FILTER (WHERE jsonb_array_length(c.metadata->'topic_tags') > 0) AS selected_chunks,
                     count(DISTINCT e.chunk_id) AS embedded_chunks
                 FROM knowledge.legal_documents d JOIN knowledge.legal_sources s ON s.id=d.source_id
                 LEFT JOIN knowledge.legal_chunks c ON c.document_id=d.id
