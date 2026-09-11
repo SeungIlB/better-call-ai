@@ -159,6 +159,7 @@ public class OcrServiceImpl implements OcrService {
         return OcrResponse.builder().fileId(file.id()).extractionId(extraction.id()).status(extraction.status())
                 .rawText(extraction.rawText()).visionJson(extraction.visionJson()).latestRevision(repository.latest(file.id()).orElse(null))
                 .confirmedRevision(file.revisionId() == null ? null : repository.revision(file.id(), file.revisionId()).orElse(null))
+                .piiFindings(PiiDetector.detect(repository.latest(file.id()).map(OcrRevisionResponse::correctedText).orElse(extraction.rawText())))
                 .build();
     }
 

@@ -1100,7 +1100,7 @@ components:
         createdAt: { type: string, format: date-time }
     OcrResult:
       type: object
-      required: [fileId, extractionId, status, rawText, visionJson, latestRevision, confirmedRevision]
+      required: [fileId, extractionId, status, rawText, visionJson, latestRevision, confirmedRevision, piiFindings]
       properties:
         fileId: { type: string, format: uuid }
         extractionId: { type: string, format: uuid }
@@ -1115,6 +1115,16 @@ components:
           anyOf:
             - $ref: '#/components/schemas/OcrRevision'
             - type: 'null'
+        piiFindings:
+          type: array
+          description: 원문을 저장하지 않는 형식 기반 개인정보 후보 위치. 자동 마스킹이나 확정 판정이 아니다.
+          items:
+            type: object
+            required: [type, start, end]
+            properties:
+              type: { type: string, enum: [email, phone, resident_registration, business_registration] }
+              start: { type: integer, minimum: 0 }
+              end: { type: integer, minimum: 0 }
     OcrSuccess:
       type: object
       required: [success, data]
