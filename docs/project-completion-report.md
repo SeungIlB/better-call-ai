@@ -44,6 +44,12 @@ OCR 조회 응답에 형식 기반 개인정보 후보의 유형과 UTF-16 위�
 
 검증: `PiiDetectorTest`, Java 전체 테스트, Node 테스트, Chromium UI smoke, OpenAPI YAML 파싱, `git diff --check`.
 
+## 추가 완료 단계 — 로그인 시도 기록 정리
+
+24시간 이상 지난 이메일 해시 기반 로그인 실패 기록을 시간당 자동 삭제하는 정리 작업을 추가했다. 삭제 대상 행의 원문·이메일은 로그에 남기지 않으며, 인증 데이터베이스 오류는 일반 작업 오류로만 기록한다.
+
+검증: `AuthCleanupServiceTest`와 Java 전체 회귀 테스트.
+
 ## 커밋 기준
 
 최근 완료 커밋:

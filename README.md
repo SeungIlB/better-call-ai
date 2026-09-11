@@ -221,7 +221,7 @@ docker compose config
 - Flyway clean 비활성화 및 migration checksum 검증
 
 로그인 제한은 이메일 단위다. 여러 이메일을 바꾸는 공격에 대한 IP/전체 요청량 제한은 아직 없으므로 공개 운영 전 별도 적용이 필요하다.
-로그인 실패 상태는 `identity.login_attempts`에 저장되며 자동 정리 배치는 아직 없다. 운영 보존 배치에서는
+로그인 실패 상태는 `identity.login_attempts`에 저장되며 24시간 이상 지난 기록은 시간당 정리 작업으로 삭제한다. 정리 실패는 원문·이메일을 로그에 남기지 않고 작업 오류만 기록한다. 운영 보존 배치에서는
 `updated_at < now() - interval '24 hours'`이고 활성 잠금이 없는 행을 정리하고, 탈퇴 시 이메일 HMAC으로 연관 상태도 삭제한다.
 
 ## 디렉터리
