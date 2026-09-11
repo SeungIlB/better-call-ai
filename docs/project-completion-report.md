@@ -50,6 +50,12 @@ OCR 조회 응답에 형식 기반 개인정보 후보의 유형과 UTF-16 위�
 
 검증: `AuthCleanupServiceTest`와 Java 전체 회귀 테스트.
 
+## 추가 완료 단계 — 순간 요청 속도 제한
+
+모든 `/api/v1` 경로에 IP·경로별 인스턴스 메모리 요청 제한을 추가했다. 기본값은 분당 600회이며 설정으로 조정할 수 있다. 상품 업로드 한도나 채팅·OCR 동시 실행 제한과 분리하고, 초과 시 공통 `COMMON_003` 429 응답을 반환한다.
+
+검증: `RequestRateLimitFilterTest`, Java 전체 테스트, Node 테스트, Chromium UI smoke, `git diff --check`.
+
 ## 커밋 기준
 
 최근 완료 커밋:

@@ -12,6 +12,7 @@ public enum ErrorCode {
     REFRESH_TOKEN_REUSED(HttpStatus.UNAUTHORIZED, "AUTH_006", "Refresh Token 재사용이 감지되었습니다. 다시 로그인해 주세요."),
     ACCOUNT_UNAVAILABLE(HttpStatus.UNAUTHORIZED, "AUTH_007", "사용할 수 없는 계정입니다."),
     LOGIN_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_008", "로그인 시도가 제한되었습니다. 15분 후 다시 시도해 주세요."),
+    REQUEST_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "COMMON_003", "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
     CASE_NOT_FOUND(HttpStatus.NOT_FOUND, "CASE_001", "사건을 찾을 수 없습니다."),
     CASE_VERSION_CONFLICT(HttpStatus.CONFLICT, "CASE_002", "사건이 다른 요청에 의해 변경되었습니다."),
     ANALYSIS_NOT_FOUND(HttpStatus.NOT_FOUND, "ANALYSIS_001", "분석 기록을 찾을 수 없습니다."),
