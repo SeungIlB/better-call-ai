@@ -61,7 +61,7 @@ public class LegalDataImportCommand {
             try (var row = statement.executeQuery("SELECT pg_try_advisory_lock(732019)")) {
                 row.next(); if (!row.getBoolean(1)) throw new IllegalStateException("IMPORT_ALREADY_RUNNING");
             }
-            if (args[0].equals("collect")) Flyway.configure().dataSource(dataSource).cleanDisabled(true)
+            if (List.of("collect", "collect-vehicle", "collect-assault", "collect-all", "rebuild-relations").contains(args[0])) Flyway.configure().dataSource(dataSource).cleanDisabled(true)
                     .locations("classpath:db/migration").load().migrate();
             var mapper = new ObjectMapper();
             var repository = new LawImportRepository(new JdbcTemplate(dataSource), mapper);
