@@ -1874,6 +1874,7 @@ class CaseFlowIntegrationTest {
         org.mockito.Mockito.verify(openAiChat).generate(capture.capture());
         assertTrue(capture.getValue().stream().anyMatch(input -> input.content().contains("확정된 누수 자료")));
         assertTrue(capture.getValue().stream().anyMatch(input -> input.content().contains("진위·법적 효력·완전성은 확인되지 않은 주장 자료")));
+        assertTrue(capture.getValue().stream().mapToInt(input -> input.content().length()).sum() <= 16000);
     }
 
     @Test

@@ -128,8 +128,10 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private List<ChatInput> context(UUID caseId, ChatTurn current) {
+        List<ChatInput> evidence = evidenceContext(caseId);
+        int evidenceLength = evidence.stream().mapToInt(input -> input.content().length()).sum();
         List<ChatTurn> selected = new ArrayList<>();
-        int remaining = 16000 - current.question().length();
+        int remaining = Math.max(0, 16000 - current.question().length() - evidenceLength);
         for (ChatTurn previous : repository.context(caseId, current.turnNo())) {
             int length = previous.question().length() + previous.answer().length();
             if (length > remaining) break;
@@ -141,7 +143,7 @@ public class ChatServiceImpl implements ChatService {
             inputs.add(new ChatInput("user", previous.question()));
             inputs.add(new ChatInput("assistant", previous.answer()));
         }
-        inputs.addAll(evidenceContext(caseId));
+        inputs.addAll(evidence);
         inputs.add(new ChatInput("user", current.question()));
         return List.copyOf(inputs);
     }
