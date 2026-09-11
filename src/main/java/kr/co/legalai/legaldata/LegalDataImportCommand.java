@@ -33,7 +33,7 @@ public class LegalDataImportCommand {
     }
 
     private static void run(String[] args) throws Exception {
-        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "collect-all", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
+        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "collect-all", "rebuild-relations", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
             throw new IllegalStateException("INVALID_LEGAL_DATA_COMMAND");
         }
         Map<String, String> config = new HashMap<>();
@@ -75,6 +75,7 @@ public class LegalDataImportCommand {
                 case "collect-vehicle" -> service.collectVehicle();
                 case "collect-assault" -> service.collectAssault();
                 case "collect-all" -> { service.collect(); service.collectVehicle(); service.collectAssault(); }
+                case "rebuild-relations" -> System.out.println("RELATION_DOCUMENTS=" + repository.rebuildRelations());
                 case "embed" -> service.embed();
                 case "search-evaluate" -> LegalSearchEvaluation.run(new JdbcTemplate(dataSource), embeddings, mapper);
                 case "draft-evaluate" -> LegalDraftEvaluation.run(new JdbcTemplate(dataSource), config, mapper);

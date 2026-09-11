@@ -86,6 +86,12 @@ public class LawImportRepository {
                 """, rows);
     }
 
+    public int rebuildRelations() {
+        var documents = jdbc.queryForList("SELECT id FROM knowledge.legal_documents WHERE document_type='law'", UUID.class);
+        documents.forEach(this::saveArticleRelations);
+        return documents.size();
+    }
+
     public List<EmbeddingInput> pendingEmbeddings(String model, int limit) {
         return jdbc.query("""
                 SELECT c.id, c.content, c.metadata->>'content_hash' AS content_hash
