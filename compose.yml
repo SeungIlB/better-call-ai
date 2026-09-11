@@ -1,4 +1,17 @@
 services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - better-call-ai-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   clamav:
     image: clamav/clamav:1.4
     environment:
@@ -48,5 +61,6 @@ services:
       retries: 20
 
 volumes:
+  better-call-ai-redis:
   better-call-ai-clamav:
   better-call-ai-postgres:

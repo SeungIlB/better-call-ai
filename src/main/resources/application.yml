@@ -20,6 +20,9 @@ spring:
     hikari:
       maximum-pool-size: ${DATABASE_AUTH_POOL_SIZE:5}
       connection-init-sql: SET TIME ZONE 'UTC'
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
   flyway:
     enabled: true
     clean-disabled: true

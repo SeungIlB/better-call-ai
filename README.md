@@ -125,7 +125,7 @@ OpenAI 연동 계약은 공식 [텍스트 생성 문서](https://developers.open
 - Lombok (`@RequiredArgsConstructor`, `@Builder`, `@Slf4j`)
 - Spring Boot 4.1
 - Gradle Wrapper
-- PostgreSQL 16 / pgvector
+- PostgreSQL 16 / pgvector / Redis 7 (분산 요청 보호)
 - Flyway
 - Spring JDBC
 - Spring Security OAuth2 Resource Server

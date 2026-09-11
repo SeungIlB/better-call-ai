@@ -8,6 +8,7 @@ import kr.co.legalai.common.exception.ErrorCode;
 import kr.co.legalai.common.exception.ErrorResponse;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import tools.jackson.databind.ObjectMapper;
@@ -21,13 +22,22 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RequestRateLimitFilter extends OncePerRequestFilter {
     private final ObjectMapper mapper;
     private final int limit;
+    private final RedisRateLimiter redisLimiter;
     private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
 
     public RequestRateLimitFilter(ObjectMapper mapper,
             @Value("${server.protection.requests-per-minute:600}") int limit) {
+        this(mapper, limit, null);
+    }
+
+    @Autowired
+    public RequestRateLimitFilter(ObjectMapper mapper,
+            @Value("${server.protection.requests-per-minute:600}") int limit,
+            RedisRateLimiter redisLimiter) {
         if (limit < 1 || limit > 100_000) throw new IllegalArgumentException("요청 제한 범위를 확인해 주세요.");
         this.mapper = mapper;
         this.limit = limit;
+        this.redisLimiter = redisLimiter;
     }
 
     @Override
@@ -50,6 +60,10 @@ public class RequestRateLimitFilter extends OncePerRequestFilter {
     }
 
     private boolean allow(String key) {
+        if (redisLimiter != null) {
+            Boolean distributed = redisLimiter.allow(key, limit);
+            if (distributed != null) return distributed;
+        }
         long now = System.nanoTime();
         Window window = windows.compute(key, (ignored, current) -> {
             if (current == null || now - current.startedAt() >= Duration.ofMinutes(1).toNanos()) return new Window(now, 1);

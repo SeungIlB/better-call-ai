@@ -114,3 +114,9 @@ MVP 완료와 제품 운영 완료는 구분한다. 다음 항목은 새로운 �
 다음 12개 검사가 모두 통과했다: 업로드, OCR에서 텍스트를 임의로 만들지 않음, 임시 원본 삭제, 분석 저장, 분석 멱등 재실행, 저장 후 재조회, 모바일 화면, 다운로드, 오래된 사건 조회, 사건 삭제, 로그아웃. 사진 분석은 차량 파손·파편 관찰과 미확인 사실을 분리하고, 도로교통법 제54조 공식 출처를 연결한 `NEEDS_REVIEW` 초안을 반환했다.
 
 최종 검증 명령: `./gradlew.bat test --no-daemon`, `npm test`, `npm run test:ui`, OpenAPI YAML 파싱, `git diff --check`, 실제 OpenAI 차량 사고 E2E.
+
+## 운영 확장 1단계 — Redis 분산 요청 보호
+
+인스턴스 메모리에만 존재하던 순간 요청 제한을 Redis 공유 버킷으로 확장했다. IP·경로 조합은 SHA-256으로 익명화하고 Lua 원자 연산으로 증가·만료를 처리한다. Redis 연결 장애나 미설정 상태에서는 기존 인스턴스 로컬 보호로 자동 전환해 요청 보호가 중단되지 않는다. `compose.yml`에 Redis 7.4 서비스와 영속 볼륨을 추가했고 `REDIS_URL`로 연결 주소를 설정한다.
+
+검증: `./gradlew.bat test --no-daemon` 통과(2026-09-11). 기존 `RequestRateLimitFilterTest`는 Redis 없이도 로컬 fallback을 검증한다.
