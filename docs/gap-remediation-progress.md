@@ -82,4 +82,10 @@
 재실행: `./gradlew.bat importLegalData --args=assault-draft-evaluate` (실제 OpenAI 비용 발생).
 
 한계: 현재는 형법·민법 조문 중심이며 판례, 수사기관 절차의 최신 안내, 전문가 검토, 반복 안정성은 후속 범위다.
+
+## MVP 완료 판정
+
+문서에 정의한 개인 사용자용 해커톤 MVP의 핵심 흐름은 완료했다. 인증·인가, 자기 사건 CRUD, 임시 원본 수명 관리, OCR 사용자 확정, 사진 관찰, 다중 증거 충돌 표시, 주택 임대차·차량 사고·폭행 도메인 검색, 공식 출처 표시, 분석·대응 메시지와 프론트 화면을 Java·Node·Chromium·실제 OpenAI 평가로 검증했다.
+
+완료 커밋은 원격에 push하지 않고 `sibaek` 브랜치에만 남겼다. 판례 확대, 법률 전문가 검토, Redis·GraphRAG·파인튜닝, 결제·조직 기능은 MVP 이후 별도 승인 범위다.
 - Java·Node·UI·OpenAPI·diff 검증 후 로컬 커밋한다.
