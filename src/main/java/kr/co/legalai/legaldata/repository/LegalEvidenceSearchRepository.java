@@ -48,10 +48,18 @@ public class LegalEvidenceSearchRepository {
                 ), lexical AS (
                     SELECT id, row_number() OVER (ORDER BY hits DESC, id) AS rank
                     FROM eligible WHERE hits > 0 ORDER BY hits DESC, id LIMIT 20
+                ), graph_neighbors AS (
+                    SELECT r.target_chunk_id AS id,
+                           row_number() OVER (ORDER BY s.rank, r.confidence DESC, r.target_chunk_id) AS rank
+                    FROM knowledge.legal_relations r
+                    JOIN semantic s ON s.id = r.source_chunk_id
+                    WHERE r.relation_type IN ('cites', 'related', 'exception', 'procedure')
+                    LIMIT 20
                 ), combined AS (
                     SELECT id, sum(score) AS score FROM (
                         SELECT id, 1.0/(60+rank) AS score FROM semantic
                         UNION ALL SELECT id, 1.0/(60+rank) AS score FROM lexical
+                        UNION ALL SELECT id, 0.5/(60+rank) AS score FROM graph_neighbors
                     ) ranks GROUP BY id
                 )
                 SELECT c.*, array_to_string(c.heading_path, ' > ') AS heading, r.score
