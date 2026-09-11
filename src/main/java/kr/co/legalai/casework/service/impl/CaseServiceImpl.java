@@ -7,6 +7,8 @@ import kr.co.legalai.casework.dto.request.UpdateCaseRequest;
 import kr.co.legalai.casework.dto.response.CaseResponse;
 import kr.co.legalai.casework.dto.response.CaseSummaryResponse;
 import kr.co.legalai.common.response.PageResponse;
+import kr.co.legalai.common.exception.BusinessException;
+import kr.co.legalai.common.exception.ErrorCode;
 import kr.co.legalai.casework.entity.CaseEntity;
 import kr.co.legalai.casework.repository.AnalysisRepository;
 import kr.co.legalai.casework.repository.CaseRepository;
@@ -32,6 +34,7 @@ public class CaseServiceImpl implements CaseService {
 
     @Override
     public CaseResponse createCase(CreateCaseRequest request) {
+        validateRole(request);
         return transaction.execute(userId -> {
             UUID caseId = UUID.randomUUID();
             caseRepository.save(caseId, userId, request);
@@ -44,6 +47,18 @@ public class CaseServiceImpl implements CaseService {
             );
             return toResponse(getRequiredCase(caseId));
         });
+    }
+
+    private void validateRole(CreateCaseRequest request) {
+        String role = request.userPartyRole() == null ? "" : request.userPartyRole().trim();
+        if (role.isBlank()) return;
+        if ("housing_lease".equals(request.normalizedDomain())) return;
+        var allowed = switch (request.normalizedDomain()) {
+            case "vehicle_accident" -> java.util.Set.of("운전자", "차량 소유자", "탑승자", "보행자");
+            case "assault" -> java.util.Set.of("피해 주장자", "상대방", "목격자");
+            default -> java.util.Set.of();
+        };
+        if (!allowed.contains(role)) throw new BusinessException(ErrorCode.VALIDATION_ERROR);
     }
 
     @Override

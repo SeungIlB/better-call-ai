@@ -537,6 +537,17 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
+    void caseRoleMustMatchSelectedDisputeDomain() {
+        authenticate(USER_A);
+        assertThrows(BusinessException.class, () -> service.createCase(new CreateCaseRequest(
+                "차량 역할 검증 사건", "임차인", null, "차량 충돌 자료", "vehicle_accident")));
+        assertThrows(BusinessException.class, () -> service.createCase(new CreateCaseRequest(
+                "폭행 역할 검증 사건", "운전자", null, "폭행 자료", "assault")));
+        assertEquals("vehicle_accident", service.createCase(new CreateCaseRequest(
+                "차량 역할 정상 사건", "운전자", null, "차량 충돌 자료", "vehicle_accident")).disputeDomain());
+    }
+
+    @Test
     void anotherUserCannotReadFileMetadata() throws SQLException {
         authenticate(USER_A);
         var created = service.createCase(new CreateCaseRequest(
