@@ -16,6 +16,16 @@ const domainInputs = {
   personal_injury: ['개인 상해 사진 검증', '사고로 인한 부상과 치료 자료를 정리하고 싶습니다.', '피해 주장자'],
   commercial: ['상거래 사진 검증', '거래 계약과 납품 자료를 정리하고 싶습니다.', '거래 당사자']
 };
+const domainQuestions = {
+  vehicle_accident: '사진에서 확인되는 차량 손상과 확인되지 않은 사고 원인·과실·책임을 구분하고 추가 자료를 안내해 주세요.',
+  labor: '사진과 설명에서 확인되는 노동·임금 관련 자료와 확인되지 않은 사실을 구분하고 추가 자료를 안내해 주세요.',
+  consumer: '사진과 설명에서 확인되는 상품·환불 자료와 확인되지 않은 사실을 구분하고 추가 자료를 안내해 주세요.',
+  family: '사진과 설명에서 확인되는 가족관계 자료와 확인되지 않은 사실을 구분하고 추가 자료를 안내해 주세요.',
+  inheritance: '사진과 설명에서 확인되는 상속 자료와 확인되지 않은 사실을 구분하고 추가 자료를 안내해 주세요.',
+  defamation: '사진과 설명에서 확인되는 게시물 자료와 확인되지 않은 사실을 구분하고 추가 자료를 안내해 주세요.',
+  personal_injury: '사진과 설명에서 확인되는 치료·상해 자료와 확인되지 않은 사실을 구분하고 추가 자료를 안내해 주세요.',
+  commercial: '사진과 설명에서 확인되는 거래 자료와 확인되지 않은 사실을 구분하고 추가 자료를 안내해 주세요.'
+};
 if (!domainInputs[domain]) throw new Error(`Unsupported LIVE_DOMAIN: ${domain}`);
 const url = new URL(base);
 if (!['localhost','127.0.0.1'].includes(url.hostname)) throw new Error('Local server required');
@@ -83,7 +93,7 @@ try {
   report.checks.originalPurged=metadata.data.purgeStatus==='purged';
   report.purgeStatus=metadata.data.purgeStatus;
   await page.getByRole('button',{name:'분석 결과',exact:true}).click();
-  await page.getByLabel('확인할 질문').fill('사용자 설명으로는 차량 두 대가 충돌했습니다. 확정 OCR에는 글자가 없습니다. 사진에서 확인되는 손상과 확인되지 않은 사고 원인·과실·책임을 구분하고 추가 자료를 안내해 주세요.');
+  await page.getByLabel('확인할 질문').fill(domainQuestions[domain]);
   await page.locator('#analysis-form [name=review]').check();
   const analysisResponse=waitPost('/analyses'),analysisStart=Date.now();
   await page.getByRole('button',{name:'이 내용으로 분석하기'}).click();
