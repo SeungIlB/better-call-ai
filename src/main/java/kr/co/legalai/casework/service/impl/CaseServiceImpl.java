@@ -57,6 +57,12 @@ public class CaseServiceImpl implements CaseService {
             case "vehicle_accident" -> java.util.Set.of("운전자", "차량 소유자", "탑승자", "보행자");
             case "assault" -> java.util.Set.of("피해 주장자", "상대방", "목격자");
             case "labor" -> java.util.Set.of("근로자", "사용자", "대리인");
+            case "consumer" -> java.util.Set.of("소비자", "사업자", "대리인");
+            case "commercial" -> java.util.Set.of("거래 당사자", "사업자", "대리인");
+            case "family" -> java.util.Set.of("본인", "상대방", "대리인");
+            case "inheritance" -> java.util.Set.of("상속인", "피상속인", "대리인");
+            case "defamation" -> java.util.Set.of("피해 주장자", "게시자", "목격자");
+            case "personal_injury" -> java.util.Set.of("피해 주장자", "상대방", "목격자");
             default -> java.util.Set.of();
         };
         if (!allowed.contains(role)) throw new BusinessException(ErrorCode.VALIDATION_ERROR);

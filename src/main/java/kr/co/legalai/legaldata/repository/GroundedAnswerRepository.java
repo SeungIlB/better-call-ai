@@ -52,7 +52,7 @@ public class GroundedAnswerRepository {
     }
 
     public Draft generate(String disputeDomain, String question, EvidenceExcerptResponse evidence, List<LegalEvidenceResponse> sources) {
-        String domainName = "vehicle_accident".equals(disputeDomain) ? "차량 사고" : "assault".equals(disputeDomain) ? "폭행" : "labor".equals(disputeDomain) ? "노동·임금" : "주택 임대차";
+        String domainName = switch (disputeDomain) { case "vehicle_accident" -> "차량 사고"; case "assault" -> "폭행"; case "labor" -> "노동·임금"; case "consumer" -> "소비자·상거래"; case "commercial" -> "상거래"; case "family" -> "가사"; case "inheritance" -> "상속"; case "defamation" -> "명예훼손"; case "personal_injury" -> "개인 상해"; default -> "주택 임대차"; };
         return generateWithInstructions(INSTRUCTIONS.replace("주택 임대차", domainName), question, evidence, sources);
     }
 

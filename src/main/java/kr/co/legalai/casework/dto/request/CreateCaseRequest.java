@@ -9,7 +9,7 @@ public record CreateCaseRequest(
         @Size(max = 40) String userPartyRole,
         @Size(max = 2_000) String userGoal,
         @Size(max = 50_000) String originalStatement,
-        @Pattern(regexp = "housing_lease|vehicle_accident|assault|labor", message = "지원하지 않는 분쟁 분야입니다.") String disputeDomain
+        @Pattern(regexp = "housing_lease|vehicle_accident|assault|labor|consumer|commercial|family|inheritance|defamation|personal_injury", message = "지원하지 않는 분쟁 분야입니다.") String disputeDomain
 ) {
     public CreateCaseRequest(String title, String userPartyRole, String userGoal, String originalStatement) {
         this(title, userPartyRole, userGoal, originalStatement, "housing_lease");
