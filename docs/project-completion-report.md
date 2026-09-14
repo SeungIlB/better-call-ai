@@ -141,6 +141,8 @@ MVP 완료와 제품 운영 완료는 구분한다. 다음 항목은 새로운 �
 
 운영 절차: 계정으로 로그인한 뒤 `/api/v1/auth/me`의 `id`를 확인하고 `.env`에 `MASTER_USER_ID`를 설정한 다음 `./gradlew.bat importLegalData --args=bootstrap-master`를 실행한다. 현재는 역할 저장·승격 기반까지이며, MASTER 전용 운영 API는 다음 단계에서 역할 검사와 함께 추가한다.
 
+로컬 운영 DB에서는 표시명 `백승일`의 활성 계정을 `MASTER`로 실제 승격했고, `.env`의 UUID 설정도 완료했다.
+
 MASTER 전용 `/api/v1/master/status`를 추가해 실제 DB 역할·활성 상태를 매 요청 검증한다. 이 경로를 결제 운영 API의 공통 인가 기준으로 사용한다.
 
 ## 운영 확장 3단계 — Access Token 즉시 차단
