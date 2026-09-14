@@ -5,5 +5,6 @@ public interface LawImportService {
     void collectVehicle();
     void collectAssault();
     void collectLabor();
+    void collectConsumer();
     void embed();
 }

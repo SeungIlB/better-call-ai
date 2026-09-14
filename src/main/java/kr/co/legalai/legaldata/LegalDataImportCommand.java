@@ -33,7 +33,7 @@ public class LegalDataImportCommand {
     }
 
     private static void run(String[] args) throws Exception {
-        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-all", "rebuild-relations", "bootstrap-master", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-labor-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
+        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-all", "rebuild-relations", "bootstrap-master", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-labor-check", "search-consumer-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
             throw new IllegalStateException("INVALID_LEGAL_DATA_COMMAND");
         }
         Map<String, String> config = new HashMap<>();
@@ -54,14 +54,14 @@ public class LegalDataImportCommand {
         }
         var dataSource = new DriverManagerDataSource(url, required(config, "DATABASE_MIGRATION_USER"),
                 required(config, "DATABASE_MIGRATION_PASSWORD"));
-        if (List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-all").contains(args[0])) required(config, "LAW_OPEN_DATA_OC");
-        if (List.of("embed", "search-check", "search-vehicle-check", "search-assault-check", "search-labor-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) required(config, "OPENAI_API_KEY");
+        if (List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-all").contains(args[0])) required(config, "LAW_OPEN_DATA_OC");
+        if (List.of("embed", "search-check", "search-vehicle-check", "search-assault-check", "search-labor-check", "search-consumer-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) required(config, "OPENAI_API_KEY");
         // 별도 세션 잠금으로 동시 운영 명령의 중복 생성·과금을 방지한다. 사용자 요청용 풀과 무관하다.
         try (var lock = dataSource.getConnection(); var statement = lock.createStatement()) {
             try (var row = statement.executeQuery("SELECT pg_try_advisory_lock(732019)")) {
                 row.next(); if (!row.getBoolean(1)) throw new IllegalStateException("IMPORT_ALREADY_RUNNING");
             }
-            if (List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-all", "rebuild-relations", "bootstrap-master").contains(args[0])) Flyway.configure().dataSource(dataSource).cleanDisabled(true)
+            if (List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-all", "rebuild-relations", "bootstrap-master").contains(args[0])) Flyway.configure().dataSource(dataSource).cleanDisabled(true)
                     .locations("classpath:db/migration").load().migrate();
             var mapper = new ObjectMapper();
             var repository = new LawImportRepository(new JdbcTemplate(dataSource), mapper);
@@ -75,7 +75,8 @@ public class LegalDataImportCommand {
                 case "collect-vehicle" -> service.collectVehicle();
                 case "collect-assault" -> service.collectAssault();
                 case "collect-labor" -> service.collectLabor();
-                case "collect-all" -> { service.collect(); service.collectVehicle(); service.collectAssault(); service.collectLabor(); }
+                case "collect-consumer" -> service.collectConsumer();
+                case "collect-all" -> { service.collect(); service.collectVehicle(); service.collectAssault(); service.collectLabor(); service.collectConsumer(); }
                 case "rebuild-relations" -> System.out.println("RELATION_DOCUMENTS=" + repository.rebuildRelations());
                 case "bootstrap-master" -> {
                     String masterId = config.getOrDefault("MASTER_USER_ID", "");
@@ -127,6 +128,15 @@ public class LegalDataImportCommand {
                     new kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository(new JdbcTemplate(dataSource))
                             .search(expanded, vector, "labor").forEach(item -> System.out.println(
                                     "LABOR heading=" + item.heading() + " rankScore=" + item.rankScore()
+                                            + " source=" + item.sourceUrl()));
+                }
+                case "search-consumer-check" -> {
+                    String query = "온라인으로 구매한 상품에 하자가 있어 환불과 청약철회를 요청하려고 합니다.";
+                    String expanded = kr.co.legalai.legaldata.service.impl.ConsumerSearchTerms.expand(query);
+                    var vector = embeddings.embed(List.of(expanded)).getFirst();
+                    new kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository(new JdbcTemplate(dataSource))
+                            .search(expanded, vector, "consumer").forEach(item -> System.out.println(
+                                    "CONSUMER heading=" + item.heading() + " rankScore=" + item.rankScore()
                                             + " source=" + item.sourceUrl()));
                 }
                 default -> { }

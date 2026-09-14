@@ -22,10 +22,11 @@ import java.util.Set;
 @Component
 @RequiredArgsConstructor
 public class LawArticleParser {
-    public static final Map<String, String> TARGETS = Map.of(
-            "민법", "001706", "주택임대차보호법", "001248", "주택임대차보호법 시행령", "004950",
-            "도로교통법", "001638", "교통사고처리 특례법", "001131", "자동차손해배상 보장법", "001746",
-            "형법", "001692", "근로기준법", "001872", "근로기준법 시행령", "003058", "근로기준법 시행규칙", "006859");
+    public static final Map<String, String> TARGETS = Map.ofEntries(
+            Map.entry("민법", "001706"), Map.entry("주택임대차보호법", "001248"), Map.entry("주택임대차보호법 시행령", "004950"),
+            Map.entry("도로교통법", "001638"), Map.entry("교통사고처리 특례법", "001131"), Map.entry("자동차손해배상 보장법", "001746"),
+            Map.entry("형법", "001692"), Map.entry("근로기준법", "001872"), Map.entry("근로기준법 시행령", "003058"), Map.entry("근로기준법 시행규칙", "006859"),
+            Map.entry("소비자기본법", "001589"), Map.entry("전자상거래 등에서의 소비자보호에 관한 법률", "009318"), Map.entry("약관의 규제에 관한 법률", "000667"));
     private static final Set<Integer> RELATED_CIVIL_ARTICLES = Set.of(390, 393, 536, 543, 544, 548, 550, 580);
     private final ObjectMapper mapper;
 
