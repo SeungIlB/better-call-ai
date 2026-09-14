@@ -10,5 +10,6 @@ public interface LawImportService {
     void collectInheritance();
     void collectDefamation();
     void collectPersonalInjury();
+    void collectCommercial();
     void embed();
 }
