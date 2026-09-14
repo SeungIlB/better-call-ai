@@ -877,6 +877,30 @@ paths:
           description: 국가법령정보 공동활용 API 호출 또는 응답 처리 실패
         '503':
           description: 국가법령정보 공동활용 API 식별자 미설정
+  /api/v1/billing/orders:
+    post:
+      operationId: createPaymentOrder
+      summary: PAID 상품 결제 주문 생성
+      responses:
+        '200': { description: 주문 생성, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentEnvelope' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/billing/payments/confirm:
+    post:
+      operationId: confirmPayment
+      summary: Toss 결제 승인 및 PAID 권한 반영
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmPaymentRequest' }
+      responses:
+        '200': { description: 승인 완료, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: 주문 금액 불일치 또는 이미 처리된 주문 }
+        '502': { description: 결제 승인 실패 }
+        '503': { description: TOSS_SECRET_KEY 미설정 }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1376,6 +1400,26 @@ components:
       properties:
         success: { type: boolean, const: true }
         data: { $ref: '#/components/schemas/FileResponse' }
+        traceId: { type: [string, 'null'] }
+    ConfirmPaymentRequest:
+      type: object
+      required: [paymentKey, orderId, amount]
+      properties:
+        paymentKey: { type: string, maxLength: 200 }
+        orderId: { type: string, minLength: 6, maxLength: 64 }
+        amount: { type: integer, minimum: 1, format: int64 }
+    Payment:
+      type: object
+      required: [orderId, status, planCode]
+      properties:
+        orderId: { type: string }
+        status: { type: string, enum: [READY, CONFIRMED] }
+        planCode: { type: string, enum: [PAID] }
+    PaymentEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data: { $ref: '#/components/schemas/Payment' }
         traceId: { type: [string, 'null'] }
     ApiError:
       type: object

@@ -386,6 +386,10 @@ docker compose up -d postgres
 
 ### 2026-09-09 실제 적재 결과
 
+## 결제 API (Toss Payments)
+
+인증 사용자는 `POST /api/v1/billing/orders`로 서버가 확정한 PAID 상품 주문을 생성한 뒤, Toss 성공 URL의 `paymentKey`, `orderId`, `amount`를 `POST /api/v1/billing/payments/confirm`으로 전달한다. 서버는 저장된 주문 금액과 사용자 소유권을 검증하고 `TOSS_SECRET_KEY`가 설정된 경우에만 승인 API를 호출한다.
+
 | 법령 | 공식 버전(MST) | 시행일 | 저장 조각 | 임베딩 조각 |
 |---|---|---|---:|---:|
 | 민법 | 284415 | 2026-03-17 | 1,232 | 44 |
