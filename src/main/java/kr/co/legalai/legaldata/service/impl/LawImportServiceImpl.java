@@ -53,6 +53,12 @@ public class LawImportServiceImpl implements LawImportService {
     @Override
     public void collectInheritance() { collect(List.of("상속세 및 증여세법", "상속세 및 증여세법 시행령"), "inheritance"); }
 
+    @Override
+    public void collectDefamation() { collect(List.of("언론중재 및 피해구제 등에 관한 법률", "정보통신망 이용촉진 및 정보보호 등에 관한 법률"), "defamation"); }
+
+    @Override
+    public void collectPersonalInjury() { collect(List.of("산업재해보상보험법", "산업재해보상보험법 시행령"), "personal_injury"); }
+
     private void collect(List<String> titles, String domain) {
         for (String title : titles) {
             var matches = LawArticleParser.nodes(source.searchCurrentLaws(title).path("LawSearch").path("law"))

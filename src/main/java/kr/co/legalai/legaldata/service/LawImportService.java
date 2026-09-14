@@ -8,5 +8,7 @@ public interface LawImportService {
     void collectConsumer();
     void collectFamily();
     void collectInheritance();
+    void collectDefamation();
+    void collectPersonalInjury();
     void embed();
 }
