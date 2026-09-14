@@ -36,6 +36,11 @@ public class LawImportServiceImpl implements LawImportService {
         collect(List.of("형법", "민법"), "assault");
     }
 
+    @Override
+    public void collectLabor() {
+        collect(List.of("근로기준법", "근로기준법 시행령", "근로기준법 시행규칙"), "labor");
+    }
+
     private void collect(List<String> titles, String domain) {
         for (String title : titles) {
             var matches = LawArticleParser.nodes(source.searchCurrentLaws(title).path("LawSearch").path("law"))

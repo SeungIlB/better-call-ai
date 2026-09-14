@@ -174,3 +174,9 @@ MASTER 전용 `/api/v1/master/status`를 추가해 실제 DB 역할·활성 상�
 ## 배포 이미지 검증 — 완료
 
 `docker build -t better-call-ai:local .`을 실행해 Spring Boot 실행 JAR이 포함된 이미지를 생성했다. 이미지 메타데이터에서 비특권 사용자 `10001`, 포트 `8080`, graceful shutdown을 사용하는 실행 명령을 확인했다. `./gradlew.bat test`, `npm test`, `npm run test:ui`, `git diff --check`도 통과했다. 실제 무료 서버 연결·도메인·TLS·외부 PostgreSQL/Redis/ClamAV 영속 저장소 설정은 서버 사업자 선택 후 배포 환경에서 최종 검증한다.
+
+## 분쟁 분야 확장 — 노동·임금 1차 구현
+
+`labor` 분야를 추가했다. 근로자·사용자·대리인 역할, 근로계약·임금·퇴직금·해고·근로시간 입력 예시, 분야별 검색어와 분석 프롬프트를 연결했다. `collect-labor` 명령으로 근로기준법·시행령·시행규칙을 공식 API에서 별도 태그로 적재할 수 있다. 노동 법률 판단은 확정하지 않고 사실·증거·확인 절차 중심으로 안내한다.
+
+검증: `./gradlew.bat test --no-daemon` 통과, OpenAPI YAML 파싱, `git diff --check`.

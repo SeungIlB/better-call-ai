@@ -56,6 +56,7 @@ public class CaseServiceImpl implements CaseService {
         var allowed = switch (request.normalizedDomain()) {
             case "vehicle_accident" -> java.util.Set.of("운전자", "차량 소유자", "탑승자", "보행자");
             case "assault" -> java.util.Set.of("피해 주장자", "상대방", "목격자");
+            case "labor" -> java.util.Set.of("근로자", "사용자", "대리인");
             default -> java.util.Set.of();
         };
         if (!allowed.contains(role)) throw new BusinessException(ErrorCode.VALIDATION_ERROR);
