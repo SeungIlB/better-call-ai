@@ -6,6 +6,7 @@ import kr.co.legalai.common.exception.BusinessException;
 import kr.co.legalai.common.exception.ErrorCode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
+import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -27,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 
 /** Responses API의 비스트리밍 사건 정리 및 서버 정의 구조화 출력 연동. 도구 실행은 지원하지 않는다. */
 @Repository
+@Slf4j
 public class OpenAiChatRepository {
     private static final String INSTRUCTIONS = """
             당신은 개인의 생활분쟁을 정리하는 상담 준비 도우미다. 변호사 역할을 사칭하지 않는다.
@@ -126,6 +128,7 @@ public class OpenAiChatRepository {
                     pending.cancel(true);
                 }
                 if (response.statusCode() == 200) return parse(response.body());
+                log.warn("OpenAI 응답 상태 오류 status={}", response.statusCode());
                 boolean transientError = response.statusCode() == 429
                         || (response.statusCode() >= 500 && response.statusCode() < 600);
                 if (attempt + 1 == attempts || !transientError) break;
@@ -134,6 +137,9 @@ public class OpenAiChatRepository {
                 if (!retryAfter.matches("[0-2]")) break;
                 Thread.sleep(Math.max(500, Long.parseLong(retryAfter) * 1000));
             }
+        } catch (BusinessException failure) {
+            log.warn("OpenAI 응답 검증 실패 code={}", failure.getErrorCode());
+            throw failure;
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
         } catch (Exception failure) {
@@ -145,7 +151,7 @@ public class OpenAiChatRepository {
 
     private GeneratedAnswer parse(byte[] body) {
         JsonNode root = mapper.readTree(body);
-        if (!root.path("status").asString().equals("completed")) throw invalid();
+        if (!root.path("status").asString().equals("completed")) { log.warn("OpenAI 응답 미완료 status={}", root.path("status").asString()); throw invalid(); }
         StringBuilder text = new StringBuilder();
         for (JsonNode item : root.path("output")) {
             if (!item.path("type").asString().equals("message")) continue;

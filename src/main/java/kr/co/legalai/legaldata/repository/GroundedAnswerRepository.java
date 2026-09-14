@@ -7,6 +7,7 @@ import kr.co.legalai.legaldata.dto.response.EvidenceExcerptResponse;
 import kr.co.legalai.legaldata.dto.response.GroundedFindingResponse;
 import kr.co.legalai.legaldata.dto.response.LegalEvidenceResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -18,6 +19,7 @@ import java.util.Map;
 
 @Repository
 @RequiredArgsConstructor
+@Slf4j
 public class GroundedAnswerRepository {
     private static final String INSTRUCTIONS = """
             주택 임대차 분쟁의 검토용 안내 초안을 한국어 JSON으로 작성한다. 변호사를 사칭하지 않는다.
@@ -69,9 +71,12 @@ public class GroundedAnswerRepository {
             var result = openAi.generateStructured(instructions, input, schema());
             return parse(result.text(), sources);
         } catch (BusinessException failure) {
+            log.warn("법률 초안 검증 실패 code={}", failure.getErrorCode());
             if (failure.getErrorCode() == ErrorCode.INTEGRATION_NOT_CONFIGURED) throw failure;
             throw invalid();
         } catch (RuntimeException failure) {
+            var frame = failure.getStackTrace().length == 0 ? null : failure.getStackTrace()[0];
+            log.warn("법률 초안 생성 실패 type={} origin={}", failure.getClass().getSimpleName(), frame == null ? "unknown" : frame.getClassName() + ":" + frame.getLineNumber());
             throw invalid();
         }
     }
