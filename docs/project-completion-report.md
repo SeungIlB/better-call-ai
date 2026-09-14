@@ -139,6 +139,8 @@ MVP 완료와 제품 운영 완료는 구분한다. 다음 항목은 새로운 �
 
 `identity.users.account_role`에 `USER`·`MASTER` 역할을 추가했다. 공개 회원가입은 항상 `USER`로 생성되고, 운영자가 `.env`의 `MASTER_USER_ID`를 지정해 `importLegalData --args=bootstrap-master`를 실행한 경우에만 활성 사용자 한 명을 `MASTER`로 승격한다. 잘못된 UUID·존재하지 않는 사용자·비활성 사용자는 실패하며, 이메일과 비밀번호를 명령 인자나 로그에 사용하지 않는다.
 
+운영 절차: 계정으로 로그인한 뒤 `/api/v1/auth/me`의 `id`를 확인하고 `.env`에 `MASTER_USER_ID`를 설정한 다음 `./gradlew.bat importLegalData --args=bootstrap-master`를 실행한다. 현재는 역할 저장·승격 기반까지이며, MASTER 전용 운영 API는 다음 단계에서 역할 검사와 함께 추가한다.
+
 ## 운영 확장 3단계 — Access Token 즉시 차단
 
 로그아웃 시 현재 Access Token의 `jti`를 남은 만료 시간만큼 Redis에 저장하고, JWT 검증 validator가 차단 목록을 확인하도록 연결했다. Redis가 일시적으로 unavailable이면 서명·만료·issuer·audience 검증은 계속 수행하며, 차단 목록만 fallback으로 건너뛴다. Refresh Token 폐기 흐름은 기존과 동일하게 유지한다.
