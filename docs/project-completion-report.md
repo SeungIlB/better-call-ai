@@ -145,6 +145,10 @@ MVP 완료와 제품 운영 완료는 구분한다. 다음 항목은 새로운 �
 
 MASTER 전용 `/api/v1/master/status`를 추가해 실제 DB 역할·활성 상태를 매 요청 검증한다. 이 경로를 결제 운영 API의 공통 인가 기준으로 사용한다.
 
+## 상용화 확장 1단계 — 결제 주문·웹훅 멱등성 저장
+
+`billing.payment_orders`와 `billing.payment_events`를 추가했다. 주문 생성 시 서버가 상품·금액·통화를 확정하고, 결제 승인 후 `paymentKey`와 상태를 저장한다. 웹훅은 이벤트 ID와 payload hash를 보관해 재전송을 한 번만 반영할 수 있는 기반을 마련했다. 실제 토스 승인 호출과 상품 권한 반영은 다음 단계에서 연결한다.
+
 ## 운영 확장 3단계 — Access Token 즉시 차단
 
 로그아웃 시 현재 Access Token의 `jti`를 남은 만료 시간만큼 Redis에 저장하고, JWT 검증 validator가 차단 목록을 확인하도록 연결했다. Redis가 일시적으로 unavailable이면 서명·만료·issuer·audience 검증은 계속 수행하며, 차단 목록만 fallback으로 건너뛴다. Refresh Token 폐기 흐름은 기존과 동일하게 유지한다.
