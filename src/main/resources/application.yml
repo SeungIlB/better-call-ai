@@ -45,6 +45,9 @@ server:
     include-stacktrace: never
 
 management:
+  health:
+    redis:
+      enabled: false
   endpoints:
     web:
       exposure:
