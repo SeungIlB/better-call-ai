@@ -139,4 +139,4 @@ MVP 완료와 제품 운영 완료는 구분한다. 다음 항목은 새로운 �
 
 로그아웃 시 현재 Access Token의 `jti`를 남은 만료 시간만큼 Redis에 저장하고, JWT 검증 validator가 차단 목록을 확인하도록 연결했다. Redis가 일시적으로 unavailable이면 서명·만료·issuer·audience 검증은 계속 수행하며, 차단 목록만 fallback으로 건너뛴다. Refresh Token 폐기 흐름은 기존과 동일하게 유지한다.
 
-검증: Java 컴파일 통과 및 기존 인증·통합 테스트 호환 확인. 다음 전체 테스트에서 로그아웃 후 동일 Access Token 재사용 거부를 회귀 검증한다.
+검증: `./gradlew.bat test --no-daemon` 전체 테스트 통과(2026-09-14). 기존 인증·통합 흐름과의 호환을 확인했다.
