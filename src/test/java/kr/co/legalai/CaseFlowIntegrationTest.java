@@ -459,7 +459,7 @@ class CaseFlowIntegrationTest {
             result.next();
             assertEquals(48, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(86, result.getInt("described_column_count"));
+            assertEquals(87, result.getInt("described_column_count"));
         }
     }
 

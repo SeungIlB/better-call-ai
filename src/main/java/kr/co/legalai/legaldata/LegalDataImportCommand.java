@@ -33,7 +33,7 @@ public class LegalDataImportCommand {
     }
 
     private static void run(String[] args) throws Exception {
-        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "collect-all", "rebuild-relations", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
+        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "collect-all", "rebuild-relations", "bootstrap-master", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
             throw new IllegalStateException("INVALID_LEGAL_DATA_COMMAND");
         }
         Map<String, String> config = new HashMap<>();
@@ -61,7 +61,7 @@ public class LegalDataImportCommand {
             try (var row = statement.executeQuery("SELECT pg_try_advisory_lock(732019)")) {
                 row.next(); if (!row.getBoolean(1)) throw new IllegalStateException("IMPORT_ALREADY_RUNNING");
             }
-            if (List.of("collect", "collect-vehicle", "collect-assault", "collect-all", "rebuild-relations").contains(args[0])) Flyway.configure().dataSource(dataSource).cleanDisabled(true)
+            if (List.of("collect", "collect-vehicle", "collect-assault", "collect-all", "rebuild-relations", "bootstrap-master").contains(args[0])) Flyway.configure().dataSource(dataSource).cleanDisabled(true)
                     .locations("classpath:db/migration").load().migrate();
             var mapper = new ObjectMapper();
             var repository = new LawImportRepository(new JdbcTemplate(dataSource), mapper);
@@ -76,6 +76,14 @@ public class LegalDataImportCommand {
                 case "collect-assault" -> service.collectAssault();
                 case "collect-all" -> { service.collect(); service.collectVehicle(); service.collectAssault(); }
                 case "rebuild-relations" -> System.out.println("RELATION_DOCUMENTS=" + repository.rebuildRelations());
+                case "bootstrap-master" -> {
+                    String masterId = config.getOrDefault("MASTER_USER_ID", "");
+                    if (!masterId.matches("[0-9a-fA-F-]{36}")) throw new IllegalStateException("MASTER_USER_ID_MISSING");
+                    int updated = new JdbcTemplate(dataSource).update(
+                            "UPDATE identity.users SET account_role='MASTER', updated_at=clock_timestamp() WHERE id=?::uuid AND status='active'", masterId);
+                    if (updated != 1) throw new IllegalStateException("MASTER_USER_NOT_FOUND");
+                    System.out.println("MASTER_BOOTSTRAPPED");
+                }
                 case "embed" -> service.embed();
                 case "search-evaluate" -> LegalSearchEvaluation.run(new JdbcTemplate(dataSource), embeddings, mapper);
                 case "draft-evaluate" -> LegalDraftEvaluation.run(new JdbcTemplate(dataSource), config, mapper);
