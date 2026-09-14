@@ -45,6 +45,8 @@ public class LegalEvidenceSearchServiceImpl implements LegalEvidenceSearchServic
                 case "assault" -> AssaultSearchTerms.expand(query);
                 case "labor" -> LaborSearchTerms.expand(query);
                 case "consumer" -> ConsumerSearchTerms.expand(query);
+                case "family" -> FamilySearchTerms.expand(query);
+                case "inheritance" -> InheritanceSearchTerms.expand(query);
                 default -> query.strip();
             };
             float[] vector = embeddings.embed(List.of(searchQuery)).getFirst();

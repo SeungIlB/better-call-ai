@@ -33,7 +33,7 @@ public class LegalDataImportCommand {
     }
 
     private static void run(String[] args) throws Exception {
-        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-all", "rebuild-relations", "bootstrap-master", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-labor-check", "search-consumer-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
+        if (args.length != 1 || !List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-family", "collect-inheritance", "collect-all", "rebuild-relations", "bootstrap-master", "embed", "verify", "search-check", "search-vehicle-check", "search-assault-check", "search-labor-check", "search-consumer-check", "search-family-check", "search-inheritance-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) {
             throw new IllegalStateException("INVALID_LEGAL_DATA_COMMAND");
         }
         Map<String, String> config = new HashMap<>();
@@ -54,14 +54,14 @@ public class LegalDataImportCommand {
         }
         var dataSource = new DriverManagerDataSource(url, required(config, "DATABASE_MIGRATION_USER"),
                 required(config, "DATABASE_MIGRATION_PASSWORD"));
-        if (List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-all").contains(args[0])) required(config, "LAW_OPEN_DATA_OC");
-        if (List.of("embed", "search-check", "search-vehicle-check", "search-assault-check", "search-labor-check", "search-consumer-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) required(config, "OPENAI_API_KEY");
+        if (List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-family", "collect-inheritance", "collect-all").contains(args[0])) required(config, "LAW_OPEN_DATA_OC");
+        if (List.of("embed", "search-check", "search-vehicle-check", "search-assault-check", "search-labor-check", "search-consumer-check", "search-family-check", "search-inheritance-check", "search-evaluate", "draft-evaluate", "vehicle-draft-evaluate", "assault-draft-evaluate", "flow-evaluate", "flow-evaluate-new").contains(args[0])) required(config, "OPENAI_API_KEY");
         // 별도 세션 잠금으로 동시 운영 명령의 중복 생성·과금을 방지한다. 사용자 요청용 풀과 무관하다.
         try (var lock = dataSource.getConnection(); var statement = lock.createStatement()) {
             try (var row = statement.executeQuery("SELECT pg_try_advisory_lock(732019)")) {
                 row.next(); if (!row.getBoolean(1)) throw new IllegalStateException("IMPORT_ALREADY_RUNNING");
             }
-            if (List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-all", "rebuild-relations", "bootstrap-master").contains(args[0])) Flyway.configure().dataSource(dataSource).cleanDisabled(true)
+            if (List.of("collect", "collect-vehicle", "collect-assault", "collect-labor", "collect-consumer", "collect-family", "collect-inheritance", "collect-all", "rebuild-relations", "bootstrap-master").contains(args[0])) Flyway.configure().dataSource(dataSource).cleanDisabled(true)
                     .locations("classpath:db/migration").load().migrate();
             var mapper = new ObjectMapper();
             var repository = new LawImportRepository(new JdbcTemplate(dataSource), mapper);
@@ -76,7 +76,9 @@ public class LegalDataImportCommand {
                 case "collect-assault" -> service.collectAssault();
                 case "collect-labor" -> service.collectLabor();
                 case "collect-consumer" -> service.collectConsumer();
-                case "collect-all" -> { service.collect(); service.collectVehicle(); service.collectAssault(); service.collectLabor(); service.collectConsumer(); }
+                case "collect-family" -> service.collectFamily();
+                case "collect-inheritance" -> service.collectInheritance();
+                case "collect-all" -> { service.collect(); service.collectVehicle(); service.collectAssault(); service.collectLabor(); service.collectConsumer(); service.collectFamily(); service.collectInheritance(); }
                 case "rebuild-relations" -> System.out.println("RELATION_DOCUMENTS=" + repository.rebuildRelations());
                 case "bootstrap-master" -> {
                     String masterId = config.getOrDefault("MASTER_USER_ID", "");
@@ -137,6 +139,16 @@ public class LegalDataImportCommand {
                     new kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository(new JdbcTemplate(dataSource))
                             .search(expanded, vector, "consumer").forEach(item -> System.out.println(
                                     "CONSUMER heading=" + item.heading() + " rankScore=" + item.rankScore()
+                                            + " source=" + item.sourceUrl()));
+                }
+                case "search-family-check", "search-inheritance-check" -> {
+                    boolean family = args[0].contains("family");
+                    String query = family ? "가족관계와 양육 관련 절차에서 확인할 자료를 정리하고 싶습니다." : "상속 재산과 상속세 확인에 필요한 자료를 정리하고 싶습니다.";
+                    String expanded = family ? kr.co.legalai.legaldata.service.impl.FamilySearchTerms.expand(query) : kr.co.legalai.legaldata.service.impl.InheritanceSearchTerms.expand(query);
+                    var vector = embeddings.embed(List.of(expanded)).getFirst();
+                    new kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository(new JdbcTemplate(dataSource))
+                            .search(expanded, vector, family ? "family" : "inheritance").forEach(item -> System.out.println(
+                                    (family ? "FAMILY" : "INHERITANCE") + " heading=" + item.heading() + " rankScore=" + item.rankScore()
                                             + " source=" + item.sourceUrl()));
                 }
                 default -> { }

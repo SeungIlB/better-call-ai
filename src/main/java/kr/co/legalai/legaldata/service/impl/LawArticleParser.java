@@ -26,7 +26,8 @@ public class LawArticleParser {
             Map.entry("민법", "001706"), Map.entry("주택임대차보호법", "001248"), Map.entry("주택임대차보호법 시행령", "004950"),
             Map.entry("도로교통법", "001638"), Map.entry("교통사고처리 특례법", "001131"), Map.entry("자동차손해배상 보장법", "001746"),
             Map.entry("형법", "001692"), Map.entry("근로기준법", "001872"), Map.entry("근로기준법 시행령", "003058"), Map.entry("근로기준법 시행규칙", "006859"),
-            Map.entry("소비자기본법", "001589"), Map.entry("전자상거래 등에서의 소비자보호에 관한 법률", "009318"), Map.entry("약관의 규제에 관한 법률", "000667"));
+            Map.entry("소비자기본법", "001589"), Map.entry("전자상거래 등에서의 소비자보호에 관한 법률", "009318"), Map.entry("약관의 규제에 관한 법률", "000667"),
+            Map.entry("가족관계의 등록 등에 관한 법률", "010444"), Map.entry("가사소송법", "001206"), Map.entry("상속세 및 증여세법", "001561"), Map.entry("상속세 및 증여세법 시행령", "003814"));
     private static final Set<Integer> RELATED_CIVIL_ARTICLES = Set.of(390, 393, 536, 543, 544, 548, 550, 580);
     private final ObjectMapper mapper;
 
