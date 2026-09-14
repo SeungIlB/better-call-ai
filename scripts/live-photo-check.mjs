@@ -5,6 +5,18 @@ import assert from 'node:assert/strict';
 
 // 명시적으로만 실행하는 실제 로컬 서버·OpenAI 검증. npm test에는 포함하지 않는다.
 const base = process.env.LIVE_BASE_URL || 'http://localhost:8081';
+const domain = process.env.LIVE_DOMAIN || 'vehicle_accident';
+const domainInputs = {
+  vehicle_accident: ['차량 사고 현장사진 실제 연동 검증', '사용자 설명: 차량 두 대가 충돌했고 차량 손상과 사고 경위가 보입니다. 충돌 원인, 신호·속도·과실 비율, 인명 피해와 보험 처리 여부는 미확인이다.', '운전자'],
+  labor: ['노동 임금 사진 검증', '근로계약과 임금 지급 내역을 확인하고 싶습니다. 미확인 사실은 남겨 주세요.', '근로자'],
+  consumer: ['소비자 분쟁 사진 검증', '상품 하자와 환불 요청 자료를 정리하고 싶습니다.', '소비자'],
+  family: ['가사 분쟁 사진 검증', '가족관계와 양육 관련 사실을 정리하고 싶습니다.', '본인'],
+  inheritance: ['상속 사진 검증', '상속 재산과 관련 자료를 정리하고 싶습니다.', '상속인'],
+  defamation: ['명예훼손 사진 검증', '온라인 게시물 관련 자료를 정리하고 싶습니다.', '피해 주장자'],
+  personal_injury: ['개인 상해 사진 검증', '사고로 인한 부상과 치료 자료를 정리하고 싶습니다.', '피해 주장자'],
+  commercial: ['상거래 사진 검증', '거래 계약과 납품 자료를 정리하고 싶습니다.', '거래 당사자']
+};
+if (!domainInputs[domain]) throw new Error(`Unsupported LIVE_DOMAIN: ${domain}`);
 const url = new URL(base);
 if (!['localhost','127.0.0.1'].includes(url.hostname)) throw new Error('Local server required');
 if (process.env.RUN_LIVE_AI !== '1' || !process.env.LIVE_IMAGE_PATH) throw new Error('Set RUN_LIVE_AI=1 and LIVE_IMAGE_PATH');
@@ -38,12 +50,14 @@ try {
   await page.locator('[name=terms]').check();await page.locator('[name=privacy]').check();
   await page.getByRole('button',{name:'동의하고 시작하기'}).click();
   await page.getByRole('button',{name:'첫 사건 만들기'}).click();
-  await page.getByLabel('사건 이름').fill('차량 사고 현장사진 실제 연동 검증');
-  await page.locator('[name=disputeDomain]').selectOption('vehicle_accident');
-  await page.getByLabel('상황 설명').fill('사용자 설명: 차량 두 대가 충돌했고 차량 손상과 사고 경위가 보입니다. 충돌 원인, 신호·속도·과실 비율, 인명 피해와 보험 처리 여부는 미확인이다.');
+  const [title, statement, role] = domainInputs[domain];
+  await page.getByLabel('사건 이름').fill(title);
+  await page.locator('[name=disputeDomain]').selectOption(domain);
+  await page.locator('[name=userPartyRole]').selectOption({label:role});
+  await page.getByLabel('상황 설명').fill(statement);
   await page.getByLabel('원하는 해결',{exact:true}).fill('사진에서 확인 가능한 손상과 사고 경위 확인에 필요한 추가 자료를 정리한다.');
   await page.getByRole('button',{name:'사건 만들기',exact:true}).click();
-  await page.getByRole('button',{name:'자료 확인',exact:true}).click();
+  await page.getByRole('button',{name:/자료 확인/}).first().click();
   await page.getByLabel('파일 선택').setInputFiles(process.env.LIVE_IMAGE_PATH);
   const uploadResponse=waitPost('/files');
   await page.getByRole('button',{name:'파일 올리기',exact:true}).click();
@@ -57,7 +71,8 @@ try {
   const ocr=(await ocrHttp.json()).data;
   report.ocrMs=Date.now()-ocrStart;
   report.checks.noInventedOcr=ocr.rawText.trim()==='[인식 가능한 텍스트 없음]';
-  assert.equal(report.checks.noInventedOcr,true,'OCR must not invent text from a scene photo');
+  report.checks.ocrReturned=Boolean(ocr.rawText && ocr.rawText.trim());
+  if (domain === 'vehicle_accident') assert.equal(report.checks.noInventedOcr,true,'OCR must not invent text from a scene photo');
   await page.getByLabel('인식 내용 확인 및 수정').waitFor();
   await page.getByRole('button',{name:'수정본 저장'}).click();
   await page.getByRole('status').filter({hasText:'수정본을 저장했어요'}).waitFor();
@@ -79,7 +94,7 @@ try {
   report.analysisMs=Date.now()-analysisStart;
   report.analysis=analysis.result;
   assert.equal(analysis.status,'succeeded');
-  assert.equal(analysis.result.evidence.text,'[인식 가능한 텍스트 없음]');
+  if (domain === 'vehicle_accident') assert.equal(analysis.result.evidence.text,'[인식 가능한 텍스트 없음]');
   report.checks.analysisSaved=true;
   await page.getByRole('heading',{name:'1차 검토 결과'}).waitFor();
   const replay=await api(`/cases/${caseId}/analyses`,'POST',analysisBody,analysisKey);
