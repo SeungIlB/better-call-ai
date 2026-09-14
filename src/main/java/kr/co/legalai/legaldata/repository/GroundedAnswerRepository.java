@@ -69,7 +69,14 @@ public class GroundedAnswerRepository {
             String input = mapper.writeValueAsString(Map.of("question", question, "evidence", evidence, "sources", inputs,
                     "referenceDate", LocalDate.now(ZoneId.of("Asia/Seoul")).toString()));
             var result = openAi.generateStructured(instructions, input, schema());
-            return parse(result.text(), sources);
+            log.debug("법률 초안 응답 수신 length={}", result.text().length());
+            try {
+                return parse(result.text(), sources);
+            } catch (BusinessException malformed) {
+                // 모델이 구조화 출력의 근거 인용 규칙을 한 번 어긴 경우에만 짧은 재생성을 허용한다.
+                var retry = openAi.generateStructured(instructions + "\nJSON 형식과 제공된 인용문 연속성을 다시 확인한다.", input, schema());
+                return parse(retry.text(), sources);
+            }
         } catch (BusinessException failure) {
             log.warn("법률 초안 검증 실패 code={}", failure.getErrorCode());
             if (failure.getErrorCode() == ErrorCode.INTEGRATION_NOT_CONFIGURED) throw failure;

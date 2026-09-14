@@ -104,7 +104,8 @@ public class OpenAiChatRepository {
     public GeneratedAnswer generateStructured(String instructions, String input, Map<String, Object> schema) {
         return generate(List.of(new ChatInput("user", input)), instructions,
                 Map.of("format", Map.of("type", "json_schema", "name", "legal_draft", "strict", true, "schema", schema)), 1,
-                Math.max(maxOutputTokens, 2400));
+                Math.max(maxOutputTokens, 6000), requestTimeout.compareTo(Duration.ofSeconds(90)) >= 0
+                        ? requestTimeout : Duration.ofSeconds(90));
     }
 
     private GeneratedAnswer generate(List<ChatInput> input, String instructions, Map<String, Object> textFormat, int attempts) {
@@ -113,6 +114,11 @@ public class OpenAiChatRepository {
 
     private GeneratedAnswer generate(List<ChatInput> input, String instructions, Map<String, Object> textFormat,
             int attempts, int effectiveMaxOutputTokens) {
+        return generate(input, instructions, textFormat, attempts, effectiveMaxOutputTokens, requestTimeout);
+    }
+
+    private GeneratedAnswer generate(List<ChatInput> input, String instructions, Map<String, Object> textFormat,
+            int attempts, int effectiveMaxOutputTokens, Duration effectiveRequestTimeout) {
         requireConfigured();
         try {
             Map<String, Object> payload = new LinkedHashMap<>(Map.of(
@@ -121,14 +127,14 @@ public class OpenAiChatRepository {
             if (!reasoningEffort.isEmpty()) payload.put("reasoning", Map.of("effort", reasoningEffort));
             if (!textFormat.isEmpty()) payload.put("text", textFormat);
             String body = mapper.writeValueAsString(payload);
-            HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(requestTimeout)
+            HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(effectiveRequestTimeout)
                     .header("Authorization", "Bearer " + apiKey).header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
             for (int attempt = 0; attempt < attempts; attempt++) {
                 var pending = client.sendAsync(request, info -> new LimitedBody());
                 HttpResponse<byte[]> response;
                 try {
-                    response = pending.get(requestTimeout.toMillis(), TimeUnit.MILLISECONDS);
+                    response = pending.get(effectiveRequestTimeout.toMillis(), TimeUnit.MILLISECONDS);
                 } finally {
                     // 헤더 이후 본문이 멎어도 전체 수신 기한을 보장한다.
                     pending.cancel(true);
