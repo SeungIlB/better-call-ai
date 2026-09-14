@@ -38,7 +38,8 @@ public class LawImportServiceImpl implements LawImportService {
 
     @Override
     public void collectLabor() {
-        collect(List.of("근로기준법", "근로기준법 시행령", "근로기준법 시행규칙"), "labor");
+        // 시행규칙은 현재 공개 API 응답 형식이 파서 계약과 달라 별도 검증 후 추가한다.
+        collect(List.of("근로기준법", "근로기준법 시행령"), "labor");
     }
 
     private void collect(List<String> titles, String domain) {
