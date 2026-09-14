@@ -14,5 +14,7 @@ public interface AuthService {
 
     void logout(String refreshToken);
 
+    default void logout(String refreshToken, String accessToken) { logout(refreshToken); }
+
     UserResponse getMe();
 }

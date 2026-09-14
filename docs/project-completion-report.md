@@ -134,3 +134,9 @@ MVP 완료와 제품 운영 완료는 구분한다. 다음 항목은 새로운 �
 기존에 이미 적재된 문서에는 `rebuild-relations` 명령으로 조문 참조 관계를 재생성할 수 있다. 실제 `collect-all` 실행 결과 세 분야의 현행 법령 7종(총 2,216개 청크, 선별 798개)이 확인됐으며 기존 임베딩은 재사용됐다.
 
 로컬 PostgreSQL에 V021 마이그레이션을 적용한 뒤 `rebuild-relations`를 실행했고, 7개 법령 문서에서 `cites` 관계 2,917건이 생성됐다.
+
+## 운영 확장 3단계 — Access Token 즉시 차단
+
+로그아웃 시 현재 Access Token의 `jti`를 남은 만료 시간만큼 Redis에 저장하고, JWT 검증 validator가 차단 목록을 확인하도록 연결했다. Redis가 일시적으로 unavailable이면 서명·만료·issuer·audience 검증은 계속 수행하며, 차단 목록만 fallback으로 건너뛴다. Refresh Token 폐기 흐름은 기존과 동일하게 유지한다.
+
+검증: Java 컴파일 통과 및 기존 인증·통합 테스트 호환 확인. 다음 전체 테스트에서 로그아웃 후 동일 Access Token 재사용 거부를 회귀 검증한다.

@@ -9,6 +9,8 @@ import kr.co.legalai.auth.entity.RefreshTokenEntity;
 import kr.co.legalai.auth.repository.AuthRepository;
 import kr.co.legalai.auth.security.IdentityCrypto;
 import kr.co.legalai.auth.security.JwtTokenService;
+import kr.co.legalai.auth.security.AccessTokenBlacklist;
+import com.nimbusds.jwt.SignedJWT;
 import kr.co.legalai.auth.service.AuthService;
 import kr.co.legalai.common.exception.BusinessException;
 import kr.co.legalai.common.exception.ErrorCode;
@@ -37,6 +39,7 @@ public class AuthServiceImpl implements AuthService {
     private final TransactionTemplate transaction;
     private final AuthenticatedUser authenticatedUser;
     private final String dummyPasswordHash;
+    private final AccessTokenBlacklist accessTokenBlacklist;
 
     public AuthServiceImpl(
             AuthRepository repository,
@@ -44,7 +47,8 @@ public class AuthServiceImpl implements AuthService {
             JwtTokenService tokenService,
             PasswordEncoder passwordEncoder,
             @Qualifier("authTransactionTemplate") TransactionTemplate transaction,
-            AuthenticatedUser authenticatedUser
+            AuthenticatedUser authenticatedUser,
+            AccessTokenBlacklist accessTokenBlacklist
     ) {
         this.repository = repository;
         this.identityCrypto = identityCrypto;
@@ -52,6 +56,7 @@ public class AuthServiceImpl implements AuthService {
         this.passwordEncoder = passwordEncoder;
         this.transaction = transaction;
         this.authenticatedUser = authenticatedUser;
+        this.accessTokenBlacklist = accessTokenBlacklist;
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -132,6 +137,17 @@ public class AuthServiceImpl implements AuthService {
                     .ifPresent(token -> repository.revokeRefreshToken(token.id(), Instant.now()));
             return Boolean.TRUE;
         }));
+    }
+
+    @Override
+    public void logout(String refreshToken, String accessToken) {
+        logout(refreshToken);
+        try {
+            var claims = SignedJWT.parse(accessToken).getJWTClaimsSet();
+            if (claims.getExpirationTime() != null) {
+                accessTokenBlacklist.revoke(claims.getJWTID(), Duration.between(Instant.now(), claims.getExpirationTime().toInstant()));
+            }
+        } catch (Exception ignored) { }
     }
 
     @Override
