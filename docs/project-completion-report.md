@@ -166,3 +166,7 @@ MASTER 전용 `/api/v1/master/status`를 추가해 실제 DB 역할·활성 상�
 `.env`의 실제 OpenAI 설정을 보완하고 로컬 서버를 8081 포트로 기동한 뒤 사용자가 제공한 차량 사고 사진으로 `scripts/live-photo-check.mjs`를 재실행했다. 업로드, 허위 OCR 방지, 원본 파기, 분석 저장, 멱등 재실행, 영속 재조회, 모바일 UI, 다운로드, stale 처리, 사건 삭제, 로그아웃을 포함한 12개 검사가 모두 통과했다. 결과: `build/live-ui/1789349317261/report.json`.
 
 초기 실패는 `OPENAI_CHAT_MODEL` 미설정과 기존 서버 포트 점유였으며 설정·프로세스를 정리한 후 재검증에 성공했다.
+
+## 무료 서버 배포 준비 — 완료
+
+플랫폼에 종속되지 않는 Docker 배포 절차와 필수 환경 변수, PostgreSQL·Redis·ClamAV 외부 의존성 구성을 `docs/free-server-deployment.md`에 정리했다. 배포 업체가 정해지면 해당 플랫폼의 포트·시크릿·영속 저장소 설정만 매핑해 검증한다.
