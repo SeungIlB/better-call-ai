@@ -123,3 +123,9 @@
 ## 16. 상거래 확장 후 회귀 검증 — 완료
 
 전체 Java 테스트, Node 테스트와 diff 검증을 상거래 코퍼스 추가 후 다시 실행해 통과했다.
+
+## 17. 구체 시나리오 분석 503 보완 — 완료
+
+실제 분야별 시나리오에서 분석 요청이 `LEGAL_ANSWER_001`(503)으로 종료되는 경로를 보완했다. 구조화 법률 초안은 일반 대화보다 긴 JSON과 근거 설명을 필요로 하므로 전용 출력 상한을 최소 2,400 토큰으로 적용했고, 도메인이 없는 기존 테스트 입력도 안전하게 기본 초안 경로로 처리하도록 null 도메인 검사를 추가했다. OpenAI 호출 예외는 사용자 응답에 공급자 원문을 노출하지 않으면서 서버 로그에 예외 종류만 남긴다.
+
+검증: `./gradlew.bat test --tests kr.co.legalai.legaldata.LegalDraftServiceTest --no-daemon`, `npm test`, `npm run test:ui`, `git diff --check` 통과. 새 서버에서의 실제 OpenAI 재검증은 기존 로컬 8081 프로세스를 교체할 권한과 현재 `.env`의 PostgreSQL 마이그레이터 비밀번호 불일치로 별도 재실행이 필요하다.
