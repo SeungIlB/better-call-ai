@@ -103,15 +103,21 @@ public class OpenAiChatRepository {
     /** 서버 내부의 근거 기반 초안 전용. 사용자에게 지침·스키마를 입력받지 않는다. */
     public GeneratedAnswer generateStructured(String instructions, String input, Map<String, Object> schema) {
         return generate(List.of(new ChatInput("user", input)), instructions,
-                Map.of("format", Map.of("type", "json_schema", "name", "legal_draft", "strict", true, "schema", schema)), 1);
+                Map.of("format", Map.of("type", "json_schema", "name", "legal_draft", "strict", true, "schema", schema)), 1,
+                Math.max(maxOutputTokens, 2400));
     }
 
     private GeneratedAnswer generate(List<ChatInput> input, String instructions, Map<String, Object> textFormat, int attempts) {
+        return generate(input, instructions, textFormat, attempts, maxOutputTokens);
+    }
+
+    private GeneratedAnswer generate(List<ChatInput> input, String instructions, Map<String, Object> textFormat,
+            int attempts, int effectiveMaxOutputTokens) {
         requireConfigured();
         try {
             Map<String, Object> payload = new LinkedHashMap<>(Map.of(
                     "model", model, "instructions", instructions, "input", input,
-                    "store", false, "stream", false, "max_output_tokens", maxOutputTokens));
+                    "store", false, "stream", false, "max_output_tokens", effectiveMaxOutputTokens));
             if (!reasoningEffort.isEmpty()) payload.put("reasoning", Map.of("effort", reasoningEffort));
             if (!textFormat.isEmpty()) payload.put("text", textFormat);
             String body = mapper.writeValueAsString(payload);
@@ -145,6 +151,7 @@ public class OpenAiChatRepository {
         } catch (Exception failure) {
             // 타임아웃·연결 오류는 처리/과금 여부가 불명확하므로 자동 재시도하지 않는다.
             // 공급자 원문, Authorization, 사용자 텍스트를 예외 cause나 로그로 전달하지 않는다.
+            log.warn("OpenAI 호출 예외 type={}", failure.getClass().getSimpleName());
         }
         throw new BusinessException(ErrorCode.CHAT_GENERATION_FAILED);
     }

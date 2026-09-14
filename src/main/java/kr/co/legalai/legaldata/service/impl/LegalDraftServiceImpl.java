@@ -65,7 +65,7 @@ public class LegalDraftServiceImpl implements LegalDraftService {
                     ? generator.generate("vehicle_accident", request.query(), combinedEvidence, sources.stream().distinct().toList())
                     : "assault".equals(first.disputeDomain())
                     ? generator.generate("assault", request.query(), combinedEvidence, sources.stream().distinct().toList())
-                    : List.of("labor", "consumer", "commercial", "family", "inheritance", "defamation", "personal_injury").contains(first.disputeDomain())
+                    : first.disputeDomain() != null && List.of("labor", "consumer", "commercial", "family", "inheritance", "defamation", "personal_injury").contains(first.disputeDomain())
                     ? generator.generate(first.disputeDomain(), request.query(), combinedEvidence, sources.stream().distinct().toList())
                     : generator.generate(request.query(), combinedEvidence, sources.stream().distinct().toList());
             var conflicts = findConflicts(contexts);
