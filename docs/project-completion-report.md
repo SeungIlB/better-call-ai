@@ -149,6 +149,8 @@ MASTER 전용 `/api/v1/master/status`를 추가해 실제 DB 역할·활성 상�
 
 `billing.payment_orders`와 `billing.payment_events`를 추가했다. 주문 생성 시 서버가 상품·금액·통화를 확정하고, 결제 승인 후 `paymentKey`와 상태를 저장한다. 웹훅은 이벤트 ID와 payload hash를 보관해 재전송을 한 번만 반영할 수 있는 기반을 마련했다. 실제 토스 승인 호출과 상품 권한 반영은 다음 단계에서 연결한다.
 
+인증 사용자가 `POST /api/v1/billing/orders`로 서버 가격(현재 PAID 9,900원)의 10분 유효 주문을 만들고, 성공 URL에서 받은 `paymentKey·orderId·amount`를 `POST /api/v1/billing/payments/confirm`으로 승인하는 흐름을 연결했다. `TOSS_SECRET_KEY`가 비어 있으면 외부 승인 없이 설정 오류를 반환한다.
+
 ## 운영 확장 3단계 — Access Token 즉시 차단
 
 로그아웃 시 현재 Access Token의 `jti`를 남은 만료 시간만큼 Redis에 저장하고, JWT 검증 validator가 차단 목록을 확인하도록 연결했다. Redis가 일시적으로 unavailable이면 서명·만료·issuer·audience 검증은 계속 수행하며, 차단 목록만 fallback으로 건너뛴다. Refresh Token 폐기 흐름은 기존과 동일하게 유지한다.
