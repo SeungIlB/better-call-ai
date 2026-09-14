@@ -170,3 +170,7 @@ MASTER 전용 `/api/v1/master/status`를 추가해 실제 DB 역할·활성 상�
 ## 무료 서버 배포 준비 — 완료
 
 플랫폼에 종속되지 않는 Docker 배포 절차와 필수 환경 변수, PostgreSQL·Redis·ClamAV 외부 의존성 구성을 `docs/free-server-deployment.md`에 정리했다. 배포 업체가 정해지면 해당 플랫폼의 포트·시크릿·영속 저장소 설정만 매핑해 검증한다.
+
+## 배포 이미지 검증 — 완료
+
+`docker build -t better-call-ai:local .`을 실행해 Spring Boot 실행 JAR이 포함된 이미지를 생성했다. 이미지 메타데이터에서 비특권 사용자 `10001`, 포트 `8080`, graceful shutdown을 사용하는 실행 명령을 확인했다. `./gradlew.bat test`, `npm test`, `npm run test:ui`, `git diff --check`도 통과했다. 실제 무료 서버 연결·도메인·TLS·외부 PostgreSQL/Redis/ClamAV 영속 저장소 설정은 서버 사업자 선택 후 배포 환경에서 최종 검증한다.
