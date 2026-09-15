@@ -24,3 +24,9 @@
 - ClamAV를 연결하지 않은 공개 업로드는 승인하지 않는다.
 - Neon Free의 저장공간·자동 중지·백업 한계 때문에 실제 사용자 개인정보와 대규모 법률 데이터를 운영하지 않는다.
 - 결제 화면과 유료 유도는 현재 정책대로 노출하지 않는다.
+
+## AWS 한 달 데모 구성
+
+신규 AWS 계정의 크레딧을 사용하는 한 달 검증은 서울 리전 EC2 `t4g.xlarge`(ARM 4 vCPU·16GB)를 기준으로 한다. Spring Boot, PostgreSQL, Redis, ClamAV를 한 VM의 Docker Compose로 실행하고, gp3 EBS 100GB에 PostgreSQL 볼륨과 로그를 둔다. ARM64 지원 이미지를 확인한 뒤 배포하며, 호환 문제가 있으면 x86 `t3.large`로 전환한다.
+
+배포 전 AWS Budgets를 설정하고 80·443만 공개한다. SSH 22번은 관리자 IP만 허용하며 5432·6379·3310은 보안 그룹에서 열지 않는다. 데모 종료 시 EC2를 terminate하고 EBS 볼륨·Elastic IP·스냅샷을 함께 삭제해 잔여 과금을 막는다. OpenAI 사용료와 데이터 전송료는 EC2 크레딧과 별도다.
