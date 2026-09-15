@@ -2,6 +2,8 @@
 
 이 프로젝트는 Docker 이미지 하나로 Spring 정적 화면과 API를 함께 제공한다. 서버는 `8080` 포트를 열고 `SERVER_PORT`로 플랫폼이 지정한 포트를 받을 수 있다.
 
+Render Blueprint는 저장소 루트의 `render.yaml`에 있다. Render가 주입하는 `PORT`를 우선 사용하고 로컬에서는 `SERVER_PORT` 또는 기본 `8080`을 사용한다.
+
 배포 환경에서는 PostgreSQL(pgvector), Redis, ClamAV를 애플리케이션과 분리된 관리형 서비스 또는 별도 컨테이너로 준비한다. `DATABASE_URL`, `DATABASE_MIGRATION_USER`, `DATABASE_MIGRATION_PASSWORD`, `DATABASE_APP_USER`, `DATABASE_APP_PASSWORD`, `DATABASE_AUTH_USER`, `DATABASE_AUTH_PASSWORD`, JWT 키 3종, `IDENTITY_*` 키, `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `LAW_OPEN_DATA_OC`, `REDIS_URL`, `CLAMAV_HOST`, `CLAMAV_PORT`를 환경 변수로 주입한다. `.env` 파일과 원본 파일은 이미지에 복사하지 않는다.
 
 배포 순서는 다음과 같다.
