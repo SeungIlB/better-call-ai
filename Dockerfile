@@ -9,6 +9,8 @@ RUN ./gradlew bootJar --no-daemon
 FROM eclipse-temurin:21-jre
 RUN useradd --system --uid 10001 app
 WORKDIR /app
+RUN mkdir -p /app/storage/temp-originals /app/build/tomcat \
+    && chown -R app /app/storage /app/build
 COPY --from=build /workspace/build/libs/*.jar app.jar
 USER 10001
 EXPOSE 8080

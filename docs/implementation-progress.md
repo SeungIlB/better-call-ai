@@ -159,3 +159,15 @@ JVM OCR 통합 회귀 테스트, OpenAI 응답 파싱 테스트, UI Chromium 흐
 사건 수정 요청에 `disputeDomain`을 추가해 생성 후에도 분쟁 분야와 역할을 함께 수정할 수 있게 했다. 기존에는 수정 DTO와 SQL에 분야 필드가 없어 화면에서 선택해도 저장되지 않았다. 소유권·버전 충돌·삭제 자료 조회를 통합 테스트로 검증했다.
 
 검증: `./gradlew.bat compileJava --no-daemon`, 자료 삭제 통합 테스트, 분야 수정 통합 테스트, `npm test`, `git diff --check` 통과. 로컬 서버는 `.env`를 읽는 `scripts/run-local.ps1`로 `http://localhost:8080`에서 기동했고, Flyway·JWT 초기화까지 확인했다.
+
+## 2026-09-17 Docker Compose 서버 배포
+
+1. 실행 구성 확인 → 기존 Compose에는 PostgreSQL·Redis·ClamAV만 있었고 앱용 Dockerfile은 별도로 존재했다. 앱의 UID 10001 사용자가 임시 원본과 Tomcat 디렉터리에 쓸 수 있도록 Dockerfile을 보완했다.
+2. 전체 서비스 연결 → `app` 서비스, 내부 서비스 이름 기반 연결, 준비 상태 의존성, 재시작 정책, 임시 원본 볼륨을 추가했다. 공개 포트는 `SERVER_PORT`로 선택하며 컨테이너 내부는 8080으로 고정한다. 기존 호스트 개발은 인프라 서비스만 지정해 실행한다. 서버 설정·실행·재배포 절차는 `docs/compose-deployment.md`에 기록했다.
+3. 실행 검증 → 별도 `bca-compose-check` 프로젝트, 임시 RSA·암호화 키, 외부 API 키 없는 환경에서 실제 Docker 빌드·기동을 확인했다. PostgreSQL migration V001~V025, 인프라 3개 헬스 체크, `/actuator/health`, 첫 화면·JS 자산, 회원가입·로그인, 사건 생성·조회, 미인증 401, 실제 ClamAV를 통과하는 가상 PNG 업로드가 성공했다. 공개 포트 18080에서도 내부 8080 연결이 동작하며, 앱·PostgreSQL 재생성 후 로그인·사건·파일 메타데이터·임시 원본이 유지됐다. 앱 실행 UID는 10001이다.
+
+`docker compose config --quiet`, 내부 주소·포트·헬스 의존성·재시작 정책·인프라 loopback 바인딩 검사와 `git diff --check`가 통과했다. `.\gradlew.bat test --no-daemon`은 Java 21에서 169개 중 7개 실패했다. 실패는 로그인 잠금 기대값 1개, refresh token DB 제약조건 관련 5개, Windows 짧은/긴 임시 경로 비교 1개다. 애플리케이션 Java 코드·테스트·DB migration은 이번 변경에 포함하지 않았다.
+
+변경 전 `d2420d8`을 별도 worktree에서 동일한 Java 21·Docker 환경으로 전체 테스트한 결과도 169개 중 동일한 7개가 실패했다. 실패 테스트 이름을 비교해 이번 구성 변경 이전에도 재현됨을 확인했다. 검증용 컨테이너·볼륨·임시 `.env`와 계정 정보는 정리했다.
+
+실제 원격 서버 배포, 도메인·HTTPS 연결과 외부 AI 호출은 이번 검증에 포함하지 않았다. 서버에서 실제 비밀값과 외부 연동 설정을 준비해야 한다.

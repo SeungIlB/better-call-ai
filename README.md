@@ -133,6 +133,8 @@ OpenAI 연동 계약은 공식 [텍스트 생성 문서](https://developers.open
 
 ## 로컬 실행
 
+서버에서 앱·DB·Redis·ClamAV를 함께 배포하려면 [Docker Compose 서버 배포](docs/compose-deployment.md)를 따른다. `.env` 설정 후 `docker compose up -d --build`로 프론트와 API까지 실행한다.
+
 `.env.example`을 복사한 뒤 세 데이터베이스 비밀번호를 각기 다른 로컬 값으로 변경합니다. 예제 값을 운영 환경에 사용하지 않습니다. 비밀번호가 비어 있으면 애플리케이션과 PostgreSQL 컨테이너는 기동에 실패합니다.
 
 JWT 서명용 RSA 키와 개인정보 보호용 키도 서로 다른 값으로 생성합니다. 개인키는 PKCS#8 DER, 공개키는 X.509 DER를 Base64 한 줄로 설정합니다.
@@ -150,8 +152,9 @@ openssl rand -base64 32
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up -d postgres
-.\gradlew.bat bootRun
+# 위 안내에 따라 .env의 비밀번호와 키를 설정한 후 실행한다.
+docker compose up -d postgres redis clamav
+.\scripts\run-local.ps1
 ```
 
 헬스 체크:
@@ -169,7 +172,7 @@ JWT는 RS256 서명, `exp`/`nbf`, `iss`, `aud`를 모두 검증합니다. `aud`�
 
 ```powershell
 .\gradlew.bat clean test
-docker compose config
+docker compose config --quiet
 ```
 
 통합 테스트는 실제 `pgvector/pgvector:pg16` 컨테이너를 띄우고 다음을 확인합니다.

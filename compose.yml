@@ -1,6 +1,36 @@
 services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-legal_ai}
+      DATABASE_APP_USER: legal_ai_app
+      DATABASE_AUTH_USER: legal_ai_auth
+      DATABASE_MIGRATION_USER: ${DATABASE_MIGRATION_USER:-legal_ai_migrator}
+      REDIS_URL: redis://redis:6379
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      PORT: 8080
+      SERVER_PORT: 8080
+      UPLOAD_TEMP_DIR: /app/storage/temp-originals
+      SERVER_TOMCAT_BASEDIR: /app/build/tomcat
+    ports:
+      - "${APP_BIND_ADDRESS:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
+    volumes:
+      - better-call-ai-originals:/app/storage/temp-originals
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+
   redis:
     image: redis:7.4-alpine
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
     ports:
       - "127.0.0.1:6379:6379"
@@ -14,6 +44,7 @@ services:
 
   clamav:
     image: clamav/clamav:1.4
+    restart: unless-stopped
     environment:
       CLAMD_CONF_StreamMaxLength: 20M
       CLAMD_CONF_MaxFileSize: 20M
@@ -43,6 +74,7 @@ services:
 
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-legal_ai}
       POSTGRES_USER: ${DATABASE_MIGRATION_USER:-legal_ai_migrator}
@@ -61,6 +93,7 @@ services:
       retries: 20
 
 volumes:
+  better-call-ai-originals:
   better-call-ai-redis:
   better-call-ai-clamav:
   better-call-ai-postgres:
