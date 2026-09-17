@@ -68,7 +68,7 @@ function newCase() {
   updateCaseRoles('housing_lease');
 }
 function updateCaseRoles(domain) {
-  const select = document.querySelector('#case-role'); if (!select) return;
+  const select = document.querySelector('#case-role, #statement-form [name="userPartyRole"]'); if (!select) return;
   select.innerHTML = (domainRoles[domain] || domainRoles.housing_lease).map(role => `<option value="${esc(role)}">${esc(role)}</option>`).join('');
   const example = domainExamples[domain] || domainExamples.housing_lease;
   const title = document.querySelector('#case-form [name="title"]');
