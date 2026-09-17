@@ -81,6 +81,7 @@ public class CaseServiceImpl implements CaseService {
                     request.originalStatement(),
                     request.userPartyRole(),
                     request.userGoal(),
+                    request.normalizedDomain(),
                     request.expectedVersion()
             );
             if (updatedRows == 0) {

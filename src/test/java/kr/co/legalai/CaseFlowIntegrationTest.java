@@ -433,6 +433,19 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
+    void caseDomainCanBeChangedWithTheVersionedUpdate() {
+        authenticate(USER_A);
+        var created = service.createCase(new CreateCaseRequest(
+                "사고 기록", "운전자", null, "차량과 충돌했습니다.", "vehicle_accident"));
+
+        var updated = service.updateCase(created.id(), new UpdateCaseRequest(
+                created.originalStatement(), 1, "피해 주장자", null, "personal_injury"));
+
+        assertEquals("personal_injury", updated.disputeDomain());
+        assertEquals("피해 주장자", updated.userPartyRole());
+    }
+
+    @Test
     void schemaDescriptionsCoverAllBusinessTablesAndCriticalColumns() throws SQLException {
         try (Connection connection = adminConnection();
              var statement = connection.createStatement();
@@ -1302,6 +1315,38 @@ class CaseFlowIntegrationTest {
                 row.next();
                 assertEquals(0, row.getInt(1));
             }
+        }
+    }
+
+    @Test
+    void ownerCanDeleteFileAndOtherUsersCannotUseTheEndpoint() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID fileId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "삭제할-자료.png", "image/png", testPng()));
+        int before;
+        try (var connection = adminConnection(); var statement = connection.prepareStatement("SELECT version_no FROM casework.cases WHERE id = ?")) {
+            statement.setObject(1, caseId);
+            try (var row = statement.executeQuery()) { row.next(); before = row.getInt(1); }
+        }
+
+        mockMvc.perform(delete("/api/v1/cases/{caseId}/files/{fileId}", caseId, fileId)
+                        .header("Authorization", "Bearer " + other.accessToken()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(delete("/api/v1/cases/{caseId}/files/{fileId}", caseId, fileId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/cases/{caseId}/files/{fileId}", caseId, fileId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNotFound());
+        try (var connection = adminConnection(); var statement = connection.prepareStatement("SELECT version_no FROM casework.cases WHERE id = ?")) {
+            statement.setObject(1, caseId);
+            try (var row = statement.executeQuery()) { row.next(); assertEquals(before + 1, row.getInt(1)); }
+        }
+        try (var connection = adminConnection(); var statement = connection.prepareStatement("SELECT removed_at IS NOT NULL FROM casework.files WHERE id = ?")) {
+            statement.setObject(1, fileId);
+            try (var row = statement.executeQuery()) { row.next(); assertTrue(row.getBoolean(1)); }
         }
     }
 

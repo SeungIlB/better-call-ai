@@ -92,12 +92,13 @@ public class CaseRepository {
                 "SELECT casework.soft_delete_case(?)", Integer.class, caseId));
     }
 
-    public int update(UUID caseId, String originalStatement, String userPartyRole, String userGoal, int expectedVersion) {
+    public int update(UUID caseId, String originalStatement, String userPartyRole, String userGoal, String disputeDomain, int expectedVersion) {
         return jdbcTemplate.update("""
                         UPDATE casework.cases
                         SET original_statement = ?,
                             user_party_role = COALESCE(?, user_party_role),
                             user_goal = COALESCE(?, user_goal),
+                            dispute_domain = COALESCE(?, dispute_domain),
                             status = 'COLLECTING',
                             version_no = version_no + 1
                         WHERE id = ? AND version_no = ?
@@ -105,6 +106,7 @@ public class CaseRepository {
                 originalStatement.trim(),
                 userPartyRole == null || userPartyRole.isBlank() ? null : userPartyRole.trim(),
                 userGoal == null ? null : (userGoal.isBlank() ? null : userGoal.trim()),
+                disputeDomain == null || disputeDomain.isBlank() ? null : disputeDomain.trim(),
                 caseId,
                 expectedVersion
         );

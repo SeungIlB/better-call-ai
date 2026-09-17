@@ -40,4 +40,10 @@ public class FileController {
     public ApiResponse<FileResponse> getFile(@PathVariable UUID caseId, @PathVariable UUID fileId) {
         return ApiResponse.success(service.getFile(caseId, fileId));
     }
+
+    @DeleteMapping("/{fileId}")
+    public ResponseEntity<Void> deleteFile(@PathVariable UUID caseId, @PathVariable UUID fileId) {
+        service.delete(caseId, fileId);
+        return ResponseEntity.noContent().build();
+    }
 }

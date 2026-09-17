@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $projectRoot
+New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot 'build/tmp') | Out-Null
 if (-not (Test-Path -LiteralPath '.env')) { throw '.env 파일에 로컬 설정을 준비해 주세요.' }
 foreach ($line in [IO.File]::ReadAllLines((Join-Path $projectRoot '.env'))) {
     if ($line.TrimStart().StartsWith('#') -or -not $line.Contains('=')) { continue }
@@ -12,5 +13,6 @@ foreach ($line in [IO.File]::ReadAllLines((Join-Path $projectRoot '.env'))) {
     }
     [Environment]::SetEnvironmentVariable($name, $value, 'Process')
 }
+$env:JAVA_TOOL_OPTIONS = "-Djava.io.tmpdir=$(Join-Path $projectRoot 'build/tmp')"
 & .\gradlew.bat bootRun
 exit $LASTEXITCODE

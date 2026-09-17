@@ -315,6 +315,15 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteFile
+      summary: 내 사건의 자료 삭제
+      description: 자료를 논리 삭제하고 현재 분석을 최신 아님으로 표시한다. 임시 원본은 삭제 작업으로 즉시 정리하며 실패하면 백그라운드 정리가 재시도한다.
+      responses:
+        '204':
+          description: 자료 삭제 완료
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/ChatConflict' }
         '429': { $ref: '#/components/responses/ChatBusy' }
         '503': { $ref: '#/components/responses/ChatUnavailable' }

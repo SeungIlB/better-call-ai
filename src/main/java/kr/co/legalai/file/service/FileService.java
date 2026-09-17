@@ -9,4 +9,5 @@ public interface FileService {
     FileResponse upload(UUID caseId, UUID idempotencyKey, MultipartFile file);
     FileResponse getFile(UUID caseId, UUID fileId);
     PageResponse<FileResponse> listFiles(UUID caseId, int page, int pageSize);
+    void delete(UUID caseId, UUID fileId);
 }

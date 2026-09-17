@@ -15,6 +15,9 @@ import kr.co.legalai.file.entity.UploadFingerprint;
 import kr.co.legalai.file.entity.UploadPolicy;
 import lombok.extern.slf4j.Slf4j;
 import kr.co.legalai.file.repository.LocalOriginalStorage;
+import kr.co.legalai.file.repository.FileCleanupRepository;
+import kr.co.legalai.casework.repository.AnalysisRepository;
+import kr.co.legalai.casework.repository.OutboxRepository;
 import kr.co.legalai.file.service.FileService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -33,6 +36,9 @@ public class FileServiceImpl implements FileService {
     private final FileValidator validator;
     private final ClamAvRepository malwareScanner;
     private final UploadRequestRepository requests;
+    private final FileCleanupRepository cleanup;
+    private final AnalysisRepository analysisRepository;
+    private final OutboxRepository outboxRepository;
 
 
     @Override
@@ -152,5 +158,23 @@ public class FileServiceImpl implements FileService {
             return new PageResponse<>(files.subList(0, Math.min(pageSize, files.size())),
                     page, pageSize, files.size() > pageSize);
         });
+    }
+
+    @Override
+    public void delete(UUID caseId, UUID fileId) {
+        transaction.execute(userId -> {
+            if (!repository.lockCase(caseId)) throw new CaseNotFoundException();
+            int nextVersion = repository.remove(caseId, fileId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.FILE_NOT_FOUND));
+            analysisRepository.markAllCurrentRunsStale(caseId);
+            outboxRepository.save(UUID.randomUUID(), "FILE_REMOVED", caseId,
+                    "file-removed:" + fileId + ":" + nextVersion, nextVersion);
+            return nextVersion;
+        });
+        try {
+            cleanup.record(fileId, storage.delete(fileId));
+        } catch (RuntimeException failure) {
+            log.error("자료 삭제 후 임시 원본 정리 기록 실패. 정리 작업에서 재확인합니다. fileId={}", fileId);
+        }
     }
 }

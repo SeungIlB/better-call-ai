@@ -118,4 +118,21 @@ public class FileRepository {
                 .createdAt(row.getTimestamp("created_at").toInstant()).storageExpiresAt(row.getTimestamp("storage_expires_at").toInstant())
                 .build(), caseId, size + 1, (long) (page - 1) * size);
     }
+
+    public Optional<Integer> remove(UUID caseId, UUID fileId) {
+        return jdbc.query("""
+                WITH removed AS (
+                    UPDATE casework.files
+                    SET removed_at = clock_timestamp(), storage_expires_at = clock_timestamp(),
+                        lifecycle_status = CASE WHEN storage_bucket IS NULL THEN 'PURGED' ELSE 'PURGE_PENDING' END,
+                        purged_at = CASE WHEN storage_bucket IS NULL THEN COALESCE(purged_at, clock_timestamp()) ELSE purged_at END
+                    WHERE id = ? AND case_id = ? AND removed_at IS NULL
+                    RETURNING case_id
+                )
+                UPDATE casework.cases c
+                SET version_no = c.version_no + 1, confirmed_at = NULL, updated_at = clock_timestamp()
+                WHERE c.id = ? AND EXISTS (SELECT 1 FROM removed)
+                RETURNING c.version_no
+                """, (row, index) -> row.getInt(1), fileId, caseId, caseId).stream().findFirst();
+    }
 }
