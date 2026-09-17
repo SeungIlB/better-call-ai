@@ -36,7 +36,7 @@ OCR 설정은 기존 `gpt-5.6-sol`, `none`, 150초 평가 설정을 유지한다
 
 서버가 `Asia/Seoul`의 현재 날짜를 `referenceDate`로 별도 전달한다. 조문 `effectiveFrom`과 비교할 현재 기준일이며 사건 발생일이 아니다. 현재 시행 여부와 사건 당시 적용 여부를 구분하고, 사건 날짜가 없으면 당시 적용을 미확인으로 남기도록 지시한다. 이는 필요한 맥락과 지침을 구분하는 [OpenAI 프롬프트 가이드](https://developers.openai.com/api/docs/guides/prompt-engineering#message-formatting-with-markdown-and-xml)를 참고한 구현이다. 기준일 전달만으로 모델의 시간 판단을 강제하거나 법령의 적용을 확정하지 않는다.
 
-출력 스키마는 `summary`, `findings`(출처 번호·원문 인용·설명), `questions`다. [OpenAI 구조화 출력](https://developers.openai.com/api/docs/guides/structured-outputs)의 `text.format`과 `strict=true`를 사용하며 서버에서도 타입·필수 필드·개수·길이·출처 범위·인용 원문 포함 여부를 검증한다. 법령명·조문 제목·공식 링크는 서버가 검색 결과에서 연결한다. 인용문 외 생성 문장의 HTTP URL·www 주소 및 `제N조` 형식 표기는 거부한다. 이 검사는 모든 허위 법률 표현을 탐지하는 장치가 아니며, 인용문이 설명을 뒷받침하는지에 대한 의미 검증도 아니다.
+출력 스키마는 `summary`, `findings`(출처 번호·원문 인용·설명), `questions`, `actionDraft`(상대방에게 보낼 사실 중심 문장), `checklist`(확인·준비할 행동)다. [OpenAI 구조화 출력](https://developers.openai.com/api/docs/guides/structured-outputs)의 `text.format`과 `strict=true`를 사용하며 서버에서도 타입·필수 필드·개수·길이·출처 범위·인용 원문 포함 여부를 검증한다. `actionDraft`는 최대 5개·각 500자, `checklist`는 최대 5개·각 300자이며 미확인 책임·법률 결론·기한을 단정하거나 돌이킬 수 없는 행동을 지시하지 않는다. 법령명·조문 제목·공식 링크는 서버가 검색 결과에서 연결한다. 인용문 외 생성 문장의 HTTP URL·www 주소 및 `제N조` 형식 표기는 거부한다. 이 검사는 모든 허위 법률 표현을 탐지하는 장치가 아니며, 인용문이 설명을 뒷받침하는지에 대한 의미 검증도 아니다.
 
 안내 초안은 아래 채팅 모델·추론·출력 예산과 최대 40초 호출 제한을 공유한다. 별도 모델의 정확도를 검증한 설정은 아니다. 인스턴스당 초안 동시 실행은 2개이며 검색 단계의 기존 한도도 적용된다. 초안 생성은 일시적 HTTP 오류에도 자동 재시도하지 않는다. 근거 후보가 없으면 생성 API를 호출하지 않고 고정 확인 필요 응답을 반환한다. 후보가 있어도 모델이 관련 근거를 선택하지 못하면 `INSUFFICIENT_EVIDENCE`다.
 

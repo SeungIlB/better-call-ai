@@ -1019,7 +1019,7 @@ components:
             - { type: 'null' }
     LegalDraft:
       type: object
-      required: [caseId, caseVersion, evidence, status, summary, findings, questions, conflicts, notice]
+      required: [caseId, caseVersion, evidence, status, summary, findings, questions, actionDraft, checklist, conflicts, notice]
       properties:
         caseId: { type: string, format: uuid }
         caseVersion: { type: integer, minimum: 1 }
@@ -1040,6 +1040,16 @@ components:
           type: array
           maxItems: 3
           items: { type: string, maxLength: 200 }
+        actionDraft:
+          type: array
+          maxItems: 5
+          items: { type: string, maxLength: 500 }
+          description: 사건 기록과 확정 자료를 바탕으로 만든 상대방 전달용 사실 중심 초안. 전송 전 사용자가 수정·확인한다.
+        checklist:
+          type: array
+          maxItems: 5
+          items: { type: string, maxLength: 300 }
+          description: 현재 확인하거나 준비할 행동 목록. 법률 결론이나 돌이킬 수 없는 행동을 확정적으로 지시하지 않는다.
         conflicts:
           type: array
           maxItems: 2

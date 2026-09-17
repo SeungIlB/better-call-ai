@@ -37,7 +37,7 @@ class LegalDraftServiceTest {
         when(evidence.findCurrent(caseId, fileId)).thenReturn(Optional.of(
                 ConfirmedEvidenceResponse.builder().revisionId(revision).build()));
         when(generator.generate(anyString(), any(), anyList())).thenReturn(new GroundedAnswerRepository.Draft(
-                "확인할 내용", List.of(GroundedFindingResponse.builder().explanation("검토 필요").build()), List.of()));
+                "확인할 내용", List.of(GroundedFindingResponse.builder().explanation("검토 필요").build()), List.of(), List.of(), List.of()));
     }
 
     private void context(boolean empty) {
