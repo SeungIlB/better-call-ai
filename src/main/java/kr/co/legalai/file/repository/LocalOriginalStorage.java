@@ -70,6 +70,22 @@ public class LocalOriginalStorage {
         }
     }
 
+    public byte[] readForOcr(UUID fileId, long expectedSize, String expectedHash) {
+        if (expectedSize < 1 || expectedSize > 20971520) {
+            throw new BusinessException(ErrorCode.OCR_ORIGINAL_UNAVAILABLE);
+        }
+        try (var input = Files.newInputStream(path(fileId), LinkOption.NOFOLLOW_LINKS)) {
+            byte[] bytes = input.readNBytes((int) expectedSize + 1);
+            String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            if (bytes.length != expectedSize || !hash.equals(expectedHash)) {
+                throw new BusinessException(ErrorCode.OCR_ORIGINAL_UNAVAILABLE);
+            }
+            return bytes;
+        } catch (IOException | java.security.NoSuchAlgorithmException failure) {
+            throw new BusinessException(ErrorCode.OCR_ORIGINAL_UNAVAILABLE);
+        }
+    }
+
     public boolean delete(UUID fileId) {
         try {
             Files.deleteIfExists(path(fileId));

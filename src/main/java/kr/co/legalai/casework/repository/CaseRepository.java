@@ -19,6 +19,7 @@ public class CaseRepository {
     private static final RowMapper<CaseEntity> ROW_MAPPER = (result, rowNumber) -> new CaseEntity(
             result.getObject("id", UUID.class),
             result.getString("title"),
+            result.getString("dispute_domain"),
             result.getString("status"),
             result.getString("user_party_role"),
             result.getString("user_goal"),
@@ -37,12 +38,13 @@ public class CaseRepository {
     public void save(UUID caseId, UUID ownerUserId, CreateCaseRequest request) {
         jdbcTemplate.update("""
                         INSERT INTO casework.cases(
-                            id, owner_user_id, title, user_party_role, user_goal, original_statement
-                        ) VALUES (?, ?, ?, ?, ?, ?)
+                            id, owner_user_id, title, dispute_domain, user_party_role, user_goal, original_statement
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                 caseId,
                 ownerUserId,
                 request.title().trim(),
+                request.normalizedDomain(),
                 trimToNull(request.userPartyRole()),
                 trimToNull(request.userGoal()),
                 trimToNull(request.originalStatement())
@@ -51,7 +53,7 @@ public class CaseRepository {
 
     public Optional<CaseEntity> findById(UUID caseId) {
         return jdbcTemplate.query("""
-                        SELECT id, title, status, user_party_role, user_goal, original_statement,
+                        SELECT id, title, dispute_domain, status, user_party_role, user_goal, original_statement,
                                version_no, created_at, updated_at
                         FROM casework.cases
                         WHERE id = ?
@@ -61,9 +63,14 @@ public class CaseRepository {
         ).stream().findFirst();
     }
 
+    public Optional<String> findDomain(UUID caseId) {
+        return jdbcTemplate.query("SELECT dispute_domain FROM casework.cases WHERE id = ? AND deleted_at IS NULL",
+                (result, rowNumber) -> result.getString(1), caseId).stream().findFirst();
+    }
+
     public List<CaseSummaryResponse> findPage(UUID ownerUserId, int page, int pageSize) {
         return jdbcTemplate.query("""
-                SELECT id, title, status, user_party_role, version_no, created_at, updated_at
+                SELECT id, title, dispute_domain, status, user_party_role, version_no, created_at, updated_at
                 FROM casework.cases
                 WHERE owner_user_id = ? AND deleted_at IS NULL
                 ORDER BY updated_at DESC, id DESC
@@ -71,6 +78,7 @@ public class CaseRepository {
                 """, (result, rowNumber) -> new CaseSummaryResponse(
                 result.getObject("id", UUID.class),
                 result.getString("title"),
+                result.getString("dispute_domain"),
                 result.getString("status"),
                 result.getString("user_party_role"),
                 result.getInt("version_no"),
@@ -84,15 +92,21 @@ public class CaseRepository {
                 "SELECT casework.soft_delete_case(?)", Integer.class, caseId));
     }
 
-    public int update(UUID caseId, String originalStatement, int expectedVersion) {
+    public int update(UUID caseId, String originalStatement, String userPartyRole, String userGoal, String disputeDomain, int expectedVersion) {
         return jdbcTemplate.update("""
                         UPDATE casework.cases
                         SET original_statement = ?,
+                            user_party_role = COALESCE(?, user_party_role),
+                            user_goal = COALESCE(?, user_goal),
+                            dispute_domain = COALESCE(?, dispute_domain),
                             status = 'COLLECTING',
                             version_no = version_no + 1
                         WHERE id = ? AND version_no = ?
                         """,
                 originalStatement.trim(),
+                userPartyRole == null || userPartyRole.isBlank() ? null : userPartyRole.trim(),
+                userGoal == null ? null : (userGoal.isBlank() ? null : userGoal.trim()),
+                disputeDomain == null || disputeDomain.isBlank() ? null : disputeDomain.trim(),
                 caseId,
                 expectedVersion
         );

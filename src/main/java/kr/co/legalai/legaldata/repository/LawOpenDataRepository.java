@@ -48,7 +48,12 @@ public class LawOpenDataRepository {
     public JsonNode search(LegalDocumentType type, String query, int page, int pageSize) {
         requireConfigured();
         String response = exchange(() -> restClient.get()
-                .uri(uriBuilder -> uriBuilder
+                .uri(uriBuilder -> {
+                    // 판례명 기본 검색으로는 누수·수선의무 등 본문의 쟁점을 놓친다.
+                    if (type == LegalDocumentType.PRECEDENT) {
+                        uriBuilder.queryParam("search", 2);
+                    }
+                    return uriBuilder
                         .path("/lawSearch.do")
                         .queryParam("OC", oc)
                         .queryParam("target", type.apiTarget())
@@ -56,7 +61,8 @@ public class LawOpenDataRepository {
                         .queryParam("query", query)
                         .queryParam("display", pageSize)
                         .queryParam("page", page)
-                        .build())
+                        .build();
+                })
                 .retrieve()
                 .body(String.class));
         return readJson(response);
@@ -81,6 +87,22 @@ public class LawOpenDataRepository {
         if (oc == null || oc.isBlank()) {
             throw new IntegrationNotConfiguredException();
         }
+    }
+
+    public JsonNode searchCurrentLaws(String title) {
+        requireConfigured();
+        return readJson(exchange(() -> restClient.get().uri(builder -> builder.path("/lawSearch.do")
+                .queryParam("OC", oc).queryParam("target", "eflaw").queryParam("type", "JSON")
+                .queryParam("nw", 3).queryParam("query", title).queryParam("display", 100).queryParam("page", 1)
+                .build()).retrieve().body(String.class)));
+    }
+
+    public JsonNode findLawVersion(String serial, String effectiveDate) {
+        requireConfigured();
+        return readJson(exchange(() -> restClient.get().uri(builder -> builder.path("/lawService.do")
+                .queryParam("OC", oc).queryParam("target", "eflaw").queryParam("type", "JSON")
+                .queryParam("MST", serial).queryParam("efYd", effectiveDate)
+                .build()).retrieve().body(String.class)));
     }
 
     private JsonNode readJson(String response) {

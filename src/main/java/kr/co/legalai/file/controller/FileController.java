@@ -1,5 +1,6 @@
 package kr.co.legalai.file.controller;
 
+import kr.co.legalai.common.response.PageResponse;
 import lombok.RequiredArgsConstructor;
 
 import kr.co.legalai.common.response.ApiResponse;
@@ -18,12 +19,19 @@ import java.util.UUID;
 public class FileController {
     private final FileService service;
 
+    @GetMapping
+    public ApiResponse<PageResponse<FileResponse>> list(@PathVariable UUID caseId,
+            @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(service.listFiles(caseId, page, pageSize));
+    }
+
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<FileResponse>> upload(
-            @PathVariable UUID caseId, @RequestPart("file") MultipartFile file
+            @PathVariable UUID caseId, @RequestHeader("Idempotency-Key") UUID idempotencyKey,
+            @RequestPart("file") MultipartFile file
     ) {
-        var response = service.upload(caseId, file);
+        var response = service.upload(caseId, idempotencyKey, file);
         return ResponseEntity.created(URI.create("/api/v1/cases/" + caseId + "/files/" + response.id()))
                 .body(ApiResponse.success(response));
     }
@@ -31,5 +39,11 @@ public class FileController {
     @GetMapping("/{fileId}")
     public ApiResponse<FileResponse> getFile(@PathVariable UUID caseId, @PathVariable UUID fileId) {
         return ApiResponse.success(service.getFile(caseId, fileId));
+    }
+
+    @DeleteMapping("/{fileId}")
+    public ResponseEntity<Void> deleteFile(@PathVariable UUID caseId, @PathVariable UUID fileId) {
+        service.delete(caseId, fileId);
+        return ResponseEntity.noContent().build();
     }
 }

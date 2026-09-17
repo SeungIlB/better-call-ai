@@ -1,6 +1,7 @@
 package kr.co.legalai.legaldata.dto.response;
 
 import kr.co.legalai.legaldata.entity.LegalDocumentType;
+import kr.co.legalai.legaldata.entity.LawKind;
 
 import java.time.LocalDate;
 
@@ -13,6 +14,7 @@ public record LegalDocumentResponse(
         LocalDate publishedOrDecisionDate,
         LocalDate effectiveDate,
         String sourceUrl,
-        String normalizedText
+        String normalizedText,
+        LawKind lawKind
 ) {
 }

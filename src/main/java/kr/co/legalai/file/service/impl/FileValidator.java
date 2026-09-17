@@ -3,6 +3,10 @@ package kr.co.legalai.file.service.impl;
 import kr.co.legalai.common.exception.BusinessException;
 import kr.co.legalai.common.exception.ErrorCode;
 import kr.co.legalai.file.entity.UploadPolicy;
+import kr.co.legalai.file.entity.UploadFingerprint;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import java.util.UUID;
 import org.apache.pdfbox.Loader;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -41,6 +45,34 @@ public class FileValidator {
             throw new BusinessException(ErrorCode.INVALID_FILE);
         }
         return mime;
+    }
+
+    public UploadFingerprint fingerprint(UUID caseId, MultipartFile file, String mime, long maxBytes) {
+        try (var input = file.getInputStream()) {
+            var digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[8192];
+            long size = 0;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                size += read;
+                if (size > maxBytes) {
+                    throw new BusinessException(ErrorCode.FILE_TOO_LARGE);
+                }
+                digest.update(buffer, 0, read);
+            }
+            if (size == 0) {
+                throw new BusinessException(ErrorCode.INVALID_FILE);
+            }
+            String contentHash = HexFormat.of().formatHex(digest.digest());
+            String metadata = caseId + "\0" + file.getOriginalFilename() + "\0" + mime + "\0" + contentHash;
+            return UploadFingerprint.builder().sha256(contentHash).sizeBytes(size)
+                    .requestHash(HexFormat.of().formatHex(digest.digest(metadata.getBytes(StandardCharsets.UTF_8))))
+                    .build();
+        } catch (BusinessException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.FILE_STORAGE_ERROR);
+        }
     }
 
     public int validateContent(Path path, String mime, UploadPolicy policy) {

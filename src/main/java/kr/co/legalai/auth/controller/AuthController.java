@@ -45,8 +45,12 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request) {
-        authService.logout(request.refreshToken());
+    public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+        String authorization = httpRequest.getHeader("Authorization");
+        String accessToken = authorization != null && authorization.startsWith("Bearer ")
+                ? authorization.substring(7) : "";
+        authService.logout(request.refreshToken(), accessToken);
         return ResponseEntity.noContent().build();
     }
 

@@ -35,6 +35,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/actuator/health/**",
+                                "/", "/index.html", "/assets/**",
                                 "/.well-known/jwks.json",
                                 "/api/v1/auth/register",
                                 "/api/v1/auth/login",
@@ -54,9 +55,23 @@ public class SecurityConfig {
     @Bean
     JwtDecoder jwtDecoder(
             JwtKeyProvider keyProvider,
+            kr.co.legalai.common.security.RevokedAccessTokenValidator revokedValidator,
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuer,
             @Value("${security.jwt.audience}") String audience
     ) throws Exception {
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withPublicKey(
+                keyProvider.getSigningKey().toRSAPublicKey()
+        ).signatureAlgorithm(SignatureAlgorithm.RS256).build();
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefaultWithIssuer(issuer),
+                new JwtAudienceValidator(audience),
+                new JwtClaimValidator<>("token_type", "access"::equals), revokedValidator
+        ));
+        return decoder;
+    }
+
+    /** 기존 단위 테스트와 로컬 도구가 사용하는 blacklist 미연결 decoder. */
+    JwtDecoder jwtDecoder(JwtKeyProvider keyProvider, String issuer, String audience) throws Exception {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withPublicKey(
                 keyProvider.getSigningKey().toRSAPublicKey()
         ).signatureAlgorithm(SignatureAlgorithm.RS256).build();

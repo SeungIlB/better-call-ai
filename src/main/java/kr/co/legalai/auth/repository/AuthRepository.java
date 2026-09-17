@@ -43,6 +43,13 @@ public class AuthRepository {
                 """, failures, lockedUntil == null ? null : Timestamp.from(lockedUntil), emailHash);
     }
 
+    public int deleteStaleLoginAttempts() {
+        return jdbcTemplate.update("""
+                DELETE FROM identity.login_attempts
+                WHERE updated_at < clock_timestamp() - interval '24 hours'
+                """);
+    }
+
     public void lockUser(UUID userId) {
         // 로그인·재발급·폐기는 사용자 행을 먼저 잠근 뒤 토큰 행을 잠근다.
         jdbcTemplate.query("SELECT id FROM identity.users WHERE id = ? FOR UPDATE",

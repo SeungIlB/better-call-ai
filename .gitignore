@@ -98,6 +98,7 @@ application-secret.properties
 ### Test and quality reports ###
 test-results/
 coverage/
+node_modules/
 jacoco/
 *.exec
 allure-results/

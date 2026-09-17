@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: better-call-ai
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    autoDeploy: false
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_MIGRATION_USER
+        sync: false
+      - key: DATABASE_MIGRATION_PASSWORD
+        sync: false
+      - key: DATABASE_AUTH_USER
+        sync: false
+      - key: DATABASE_AUTH_PASSWORD
+        sync: false
+      - key: DATABASE_APP_USER
+        sync: false
+      - key: DATABASE_APP_PASSWORD
+        sync: false
+      - key: JWT_ISSUER
+        sync: false
+      - key: JWT_AUDIENCE
+        value: better-call-ai
+      - key: JWT_KEY_ID
+        value: better-call-ai-render
+      - key: JWT_PRIVATE_KEY_BASE64
+        sync: false
+      - key: JWT_PUBLIC_KEY_BASE64
+        sync: false
+      - key: IDENTITY_ENCRYPTION_KEY_ID
+        value: render-v1
+      - key: IDENTITY_ENCRYPTION_KEY_BASE64
+        sync: false
+      - key: IDENTITY_LOOKUP_KEY_BASE64
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_CHAT_MODEL
+        sync: false
+      - key: OPENAI_CHAT_MAX_OUTPUT_TOKENS
+        value: "1200"
+      - key: OPENAI_OCR_MODEL
+        sync: false
+      - key: OPENAI_OCR_TIMEOUT_SECONDS
+        value: "150"
+      - key: LAW_OPEN_DATA_OC
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CLAMAV_HOST
+        sync: false
+      - key: CLAMAV_PORT
+        sync: false
+      - key: TOSS_SECRET_KEY
+        sync: false

@@ -31,6 +31,8 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import kr.co.legalai.file.service.FileCleanupService;
 import kr.co.legalai.file.repository.FileCleanupRepository;
+import kr.co.legalai.file.repository.ClamAvRepository;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,6 +70,238 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class CaseFlowIntegrationTest {
+    @Test
+    void webShellIsPublicAndFileListingIsPaginatedAndOwnerScoped() throws Exception {
+        mockMvc.perform(get("/")).andExpect(status().isOk());
+        mockMvc.perform(get("/assets/app.mjs")).andExpect(status().isOk());
+        var fixture = pendingOcrFixture();
+        String path = "/api/v1/cases/" + fixture.caseId() + "/files";
+        mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
+        var other = registerTestUser();
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + other.accessToken())).andExpect(status().isNotFound());
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].id").value(fixture.fileId().toString()))
+                .andExpect(jsonPath("$.data.hasNext").value(false));
+        mockMvc.perform(get(path).param("page", "0").header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isBadRequest());
+        ocrUpdate("UPDATE casework.files SET removed_at=now() WHERE id=?", fixture.fileId());
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty());
+    }
+
+    @Test
+    void savedAnalysisReplaysAndBecomesStaleAfterCaseAndOcrChanges() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "확정한 집 수리 자료")).andExpect(status().isOk());
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of(vector));
+        UUID key = UUID.randomUUID();
+        var first = savedAnalysis(fixture, key, 2).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("succeeded"))
+                .andExpect(jsonPath("$.data.stale").value(false))
+                .andExpect(jsonPath("$.data.result.status").value("INSUFFICIENT_EVIDENCE"))
+                .andReturn();
+        String id = objectMapper.readTree(first.getResponse().getContentAsString()).path("data").path("id").asString();
+        savedAnalysis(fixture, key, 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(id));
+        org.mockito.Mockito.verify(searchEmbeddings, org.mockito.Mockito.times(1)).embed(org.mockito.ArgumentMatchers.anyList());
+        savedAnalysis(fixture, key, 3).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ANALYSIS_002"));
+        String path = "/api/v1/cases/" + fixture.caseId() + "/analyses";
+        mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
+        var other = registerTestUser();
+        mockMvc.perform(get(path + "/" + id).header("Authorization", "Bearer " + other.accessToken())).andExpect(status().isNotFound());
+        mockMvc.perform(get(path).param("pageSize", "21").header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/v1/cases/" + fixture.caseId()).header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"originalStatement\":\"수선 비용을 추가 확인했습니다.\",\"expectedVersion\":2}"))
+                .andExpect(status().isOk());
+        savedAnalysis(fixture, key, 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.stale").value(true));
+        var second = savedAnalysis(fixture, UUID.randomUUID(), 3).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.version").value(2)).andReturn();
+        String secondId = objectMapper.readTree(second.getResponse().getContentAsString()).path("data").path("id").asString();
+        confirmOcr(fixture, saveOcr(fixture, 1, "수정 확정한 문서")).andExpect(status().isOk());
+        mockMvc.perform(get(path + "/" + secondId).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.stale").value(true))
+                .andExpect(jsonPath("$.data.staleReason").value("ocr_changed"));
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(2));
+        mockMvc.perform(delete("/api/v1/cases/" + fixture.caseId()).header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get(path + "/" + id).header("Authorization", "Bearer " + fixture.owner().accessToken())).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void savedAnalysisFailureIsRecordedAndExpiredReservationCanBeReplaced() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "확정 자료")).andExpect(status().isOk());
+        UUID key = UUID.randomUUID();
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenThrow(new IllegalStateException("test failure"));
+        savedAnalysis(fixture, key, 2).andExpect(status().isServiceUnavailable());
+        var replay = savedAnalysis(fixture, key, 2).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.errorCode").value("LEGAL_DATA_002")).andReturn();
+        org.mockito.Mockito.verify(searchEmbeddings, org.mockito.Mockito.times(1)).embed(org.mockito.ArgumentMatchers.anyList());
+        UUID id = UUID.fromString(objectMapper.readTree(replay.getResponse().getContentAsString()).path("data").path("id").asString());
+        ocrUpdate("UPDATE aiops.analysis_runs SET status='running',started_at=now() WHERE id=?", id);
+        savedAnalysis(fixture, key, 2).andExpect(status().isAccepted());
+        savedAnalysis(fixture, UUID.randomUUID(), 2).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ANALYSIS_003"));
+        ocrUpdate("UPDATE aiops.analysis_runs SET started_at=now()-interval '6 minutes' WHERE id=?", id);
+        savedAnalysis(fixture, key, 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.errorCode").value("ANALYSIS_004"));
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.doReturn(List.of(vector)).when(searchEmbeddings).embed(org.mockito.ArgumentMatchers.anyList());
+        savedAnalysis(fixture, UUID.randomUUID(), 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value(2));
+    }
+
+    @Test
+    void savedAnalysisDoesNotPersistResultAfterInputChangesDuringGeneration() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "수리 확인 자료")).andExpect(status().isOk());
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            ocrUpdate("UPDATE casework.cases SET version_no=version_no+1 WHERE id=?", fixture.caseId());
+            return List.of(vector);
+        });
+        UUID key = UUID.randomUUID();
+        savedAnalysis(fixture, key, 2).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CASE_002"));
+        savedAnalysis(fixture, key, 2).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.stale").value(true)).andExpect(jsonPath("$.data.result").doesNotExist());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions savedAnalysis(OcrFixture fixture, UUID key, int version) throws Exception {
+        return mockMvc.perform(post("/api/v1/cases/" + fixture.caseId() + "/analyses")
+                .header("Authorization", "Bearer " + fixture.owner().accessToken()).header("Idempotency-Key", key.toString())
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(java.util.Map.of(
+                        "fileId", fixture.fileId(), "query", "집 수선의 근거를 확인해 주세요.", "expectedCaseVersion", version))));
+    }
+
+    @MockitoBean
+    private kr.co.legalai.legaldata.repository.EmbeddingRepository searchEmbeddings;
+
+    @Test
+    void legalEvidenceSearchRequiresAuthenticationAndValidInput() throws Exception {
+        mockMvc.perform(post("/api/v1/legal-evidence/search").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"query\":\"수선 비용\"}")).andExpect(status().isUnauthorized());
+        var owner = registerTestUser();
+        for (String query : List.of(" ", "가".repeat(1001))) {
+            mockMvc.perform(post("/api/v1/legal-evidence/search")
+                    .header("Authorization", "Bearer " + owner.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(java.util.Map.of("query", query))))
+                    .andExpect(status().isBadRequest());
+        }
+        org.mockito.Mockito.verifyNoInteractions(searchEmbeddings);
+    }
+
+    @Test
+    void legalEvidenceSearchReturnsRankedOfficialChunksAndExcludesIneligibleVersions() throws Exception {
+        var dataSource = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        var admin = new JdbcTemplate(dataSource);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource));
+        var importer = new kr.co.legalai.legaldata.repository.LawImportRepository(admin, objectMapper);
+        String externalId = UUID.randomUUID().toString();
+        String hash = "a".repeat(64);
+        var parts = new java.util.ArrayList<kr.co.legalai.legaldata.entity.CollectedLaw.Part>();
+        for (int i = 0; i < 12; i++) {
+            parts.add(kr.co.legalai.legaldata.entity.CollectedLaw.Part.builder().heading("제" + (i + 1) + "조")
+                    .type("article").content(i == 0 ? "수선 비용 관련 가상 조문" : "다른 가상 조문 " + i)
+                    .metadata(java.util.Map.of("topic_tags", i == 10 ? List.of() : List.of("housing_lease"),
+                            "content_hash", hash, "deleted", i == 9,
+                            "effective_from", i == 8 ? "2999-01-01" : "2020-01-01")).build());
+        }
+        var law = kr.co.legalai.legaldata.entity.CollectedLaw.builder().externalId(externalId).title("검색 테스트 법령")
+                .serial("1").effectiveFrom(java.time.LocalDate.of(2020, 1, 1))
+                .kind(kr.co.legalai.legaldata.entity.LawKind.ACT)
+                .sourceUrl("https://www.law.go.kr/LSW/lsInfoP.do?lsiSeq=1")
+                .rawJson("{}").contentHash(hash).parts(parts).build();
+        tx.executeWithoutResult(s -> importer.save(law));
+        try {
+            var rows = admin.queryForList("""
+                    SELECT c.id, c.ordinal FROM knowledge.legal_chunks c
+                    JOIN knowledge.legal_documents d ON d.id=c.document_id WHERE d.external_id=? ORDER BY c.ordinal
+                    """, externalId);
+            float[] vector = new float[1536]; vector[0] = 1;
+            var inputs = rows.stream().map(r -> new kr.co.legalai.legaldata.repository.LawImportRepository.EmbeddingInput(
+                    (UUID) r.get("id"), "테스트", ((Number) r.get("ordinal")).intValue() == 11 ? "b".repeat(64) : hash)).toList();
+            tx.executeWithoutResult(s -> importer.saveEmbeddings(
+                    kr.co.legalai.legaldata.repository.EmbeddingRepository.MODEL, inputs,
+                    java.util.Collections.nCopies(inputs.size(), vector)));
+            org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of(vector));
+            var owner = registerTestUser();
+            String body = mockMvc.perform(post("/api/v1/legal-evidence/search")
+                    .header("Authorization", "Bearer " + owner.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"query\":\"수선 비용\"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(8))
+                    .andExpect(jsonPath("$.data.items[0].content").value("수선 비용 관련 가상 조문"))
+                    .andExpect(jsonPath("$.data.items[0].sourceUrl").value(law.sourceUrl()))
+                    .andExpect(jsonPath("$.data.page").value(1)).andExpect(jsonPath("$.data.hasNext").value(false))
+                    .andReturn().getResponse().getContentAsString();
+            var found = objectMapper.readTree(body).path("data").path("items");
+            var allowed = rows.subList(0, 8).stream().map(r -> r.get("id").toString()).toList();
+            for (var item : found) assertTrue(allowed.contains(item.path("chunkId").asString()));
+            admin.update("UPDATE knowledge.legal_documents SET is_current=false WHERE external_id=?", externalId);
+            mockMvc.perform(post("/api/v1/legal-evidence/search")
+                    .header("Authorization", "Bearer " + owner.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"query\":\"수선 비용\"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(0));
+        } finally {
+            admin.update("DELETE FROM knowledge.legal_documents WHERE external_id=?", externalId);
+        }
+    }
+
+    @Test
+    void lawImportIsTransactionalAndEmbeddingsAreIdempotent() {
+        var dataSource = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        var jdbc = new JdbcTemplate(dataSource);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource));
+        var repo = new kr.co.legalai.legaldata.repository.LawImportRepository(jdbc, objectMapper);
+        String externalId = UUID.randomUUID().toString();
+        String hash = kr.co.legalai.legaldata.service.impl.LawArticleParser.hash("테스트 조문");
+        var part = kr.co.legalai.legaldata.entity.CollectedLaw.Part.builder()
+                .heading("테스트 제1조").type("article").content("테스트 조문")
+                .metadata(java.util.Map.of("topic_tags", List.of("housing_lease"), "content_hash", hash)).build();
+        var law = kr.co.legalai.legaldata.entity.CollectedLaw.builder().externalId(externalId).title("테스트 법령")
+                .serial("1").effectiveFrom(java.time.LocalDate.of(2026, 1, 1))
+                .kind(kr.co.legalai.legaldata.entity.LawKind.ACT).sourceUrl("https://www.law.go.kr")
+                .rawJson("{}").contentHash(hash).parts(List.of(part)).build();
+        assertEquals(true, transactions.execute(status -> repo.save(law)));
+        assertEquals(false, transactions.execute(status -> repo.save(law)));
+        UUID chunk = jdbc.queryForObject("""
+                SELECT c.id FROM knowledge.legal_chunks c JOIN knowledge.legal_documents d ON d.id=c.document_id
+                WHERE d.external_id=?
+                """, UUID.class, externalId);
+        var input = new kr.co.legalai.legaldata.repository.LawImportRepository.EmbeddingInput(chunk, part.content(), hash);
+        var vectors = new float[1536]; vectors[0] = 1;
+        String model = kr.co.legalai.legaldata.repository.EmbeddingRepository.MODEL;
+        assertTrue(repo.pendingEmbeddings(model, 100).stream().anyMatch(row -> row.id().equals(chunk)));
+        transactions.executeWithoutResult(status -> repo.saveEmbeddings(model, List.of(input), List.of(vectors)));
+        transactions.executeWithoutResult(status -> repo.saveEmbeddings(model, List.of(input), List.of(vectors)));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM knowledge.chunk_embeddings WHERE chunk_id=?", Integer.class, chunk));
+        assertTrue(repo.pendingEmbeddings(model, 100).stream().noneMatch(row -> row.id().equals(chunk)));
+        assertTrue(repo.search(vectors).stream().anyMatch(row -> row.get("title").equals("테스트 법령")));
+        var broken = kr.co.legalai.legaldata.entity.CollectedLaw.builder().externalId(externalId).title("테스트 법령")
+                .serial("2").effectiveFrom(java.time.LocalDate.of(2026, 2, 1))
+                .kind(kr.co.legalai.legaldata.entity.LawKind.ACT).sourceUrl("https://www.law.go.kr")
+                .rawJson("{}").contentHash(hash).parts(List.of(
+                        kr.co.legalai.legaldata.entity.CollectedLaw.Part.builder().heading("오류")
+                                .type("article").content("오류")
+                                .metadata(java.util.Map.of("topic_tags", List.of(""))).build())).build();
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
+                () -> transactions.execute(status -> repo.save(broken)));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM knowledge.legal_documents WHERE external_id=? AND is_current",
+                Integer.class, externalId));
+        jdbc.update("DELETE FROM knowledge.legal_documents WHERE external_id=?", externalId);
+    }
+
+    @MockitoBean
+    private kr.co.legalai.chat.repository.OpenAiChatRepository openAiChat;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+    private kr.co.legalai.chat.repository.ChatRepository chatRepository;
+    @MockitoBean
+    private ClamAvRepository malwareScanner;
     private static final UUID USER_A = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID USER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final KeyPair JWT_KEY_PAIR = generateRsaKeyPair();
@@ -122,6 +356,9 @@ class CaseFlowIntegrationTest {
 
     @Autowired
     private FileCleanupRepository fileCleanupRepository;
+
+    @MockitoBean
+    private kr.co.legalai.file.repository.OpenAiOcrRepository openAiOcr;
 
     @Autowired
     private IdentityCrypto identityCrypto;
@@ -196,6 +433,19 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
+    void caseDomainCanBeChangedWithTheVersionedUpdate() {
+        authenticate(USER_A);
+        var created = service.createCase(new CreateCaseRequest(
+                "사고 기록", "운전자", null, "차량과 충돌했습니다.", "vehicle_accident"));
+
+        var updated = service.updateCase(created.id(), new UpdateCaseRequest(
+                created.originalStatement(), 1, "피해 주장자", null, "personal_injury"));
+
+        assertEquals("personal_injury", updated.disputeDomain());
+        assertEquals("피해 주장자", updated.userPartyRole());
+    }
+
+    @Test
     void schemaDescriptionsCoverAllBusinessTablesAndCriticalColumns() throws SQLException {
         try (Connection connection = adminConnection();
              var statement = connection.createStatement();
@@ -220,9 +470,9 @@ class CaseFlowIntegrationTest {
                        )
                      """)) {
             result.next();
-            assertEquals(42, result.getInt("table_count"));
+            assertEquals(48, result.getInt("table_count"));
             assertEquals(result.getInt("table_count"), result.getInt("described_table_count"));
-            assertEquals(48, result.getInt("described_column_count"));
+            assertEquals(87, result.getInt("described_column_count"));
         }
     }
 
@@ -297,6 +547,17 @@ class CaseFlowIntegrationTest {
             statement.setString(3, "a".repeat(64));
             assertThrows(SQLException.class, statement::executeUpdate);
         }
+    }
+
+    @Test
+    void caseRoleMustMatchSelectedDisputeDomain() {
+        authenticate(USER_A);
+        assertThrows(BusinessException.class, () -> service.createCase(new CreateCaseRequest(
+                "차량 역할 검증 사건", "임차인", null, "차량 충돌 자료", "vehicle_accident")));
+        assertThrows(BusinessException.class, () -> service.createCase(new CreateCaseRequest(
+                "폭행 역할 검증 사건", "운전자", null, "폭행 자료", "assault")));
+        assertEquals("vehicle_accident", service.createCase(new CreateCaseRequest(
+                "차량 역할 정상 사건", "운전자", null, "차량 충돌 자료", "vehicle_accident")).disputeDomain());
     }
 
     @Test
@@ -993,13 +1254,16 @@ class CaseFlowIntegrationTest {
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isNotFound());
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", bytes))
                         .header("Authorization", "Bearer " + other.accessToken()))
                 .andExpect(status().isNotFound());
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", bytes)))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isBadRequest());
         try (var connection = adminConnection();
@@ -1030,11 +1294,13 @@ class CaseFlowIntegrationTest {
                 new MockMultipartFile("file", "증거.pdf", "application/pdf", testPdf(31)),
                 new MockMultipartFile("file", "증거.pdf", "application/pdf", testPdf(0)),
                 new MockMultipartFile("file", "증거.png", "image/png", new byte[0]))) {
-            mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+            mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString()).file(file)
                             .header("Authorization", "Bearer " + owner.accessToken()))
                     .andExpect(status().isBadRequest());
         }
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", new byte[20 * 1024 * 1024 + 1]))
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().is(413))
@@ -1053,6 +1319,38 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
+    void ownerCanDeleteFileAndOtherUsersCannotUseTheEndpoint() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID fileId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "삭제할-자료.png", "image/png", testPng()));
+        int before;
+        try (var connection = adminConnection(); var statement = connection.prepareStatement("SELECT version_no FROM casework.cases WHERE id = ?")) {
+            statement.setObject(1, caseId);
+            try (var row = statement.executeQuery()) { row.next(); before = row.getInt(1); }
+        }
+
+        mockMvc.perform(delete("/api/v1/cases/{caseId}/files/{fileId}", caseId, fileId)
+                        .header("Authorization", "Bearer " + other.accessToken()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(delete("/api/v1/cases/{caseId}/files/{fileId}", caseId, fileId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/cases/{caseId}/files/{fileId}", caseId, fileId)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isNotFound());
+        try (var connection = adminConnection(); var statement = connection.prepareStatement("SELECT version_no FROM casework.cases WHERE id = ?")) {
+            statement.setObject(1, caseId);
+            try (var row = statement.executeQuery()) { row.next(); assertEquals(before + 1, row.getInt(1)); }
+        }
+        try (var connection = adminConnection(); var statement = connection.prepareStatement("SELECT removed_at IS NOT NULL FROM casework.files WHERE id = ?")) {
+            statement.setObject(1, fileId);
+            try (var row = statement.executeQuery()) { row.next(); assertTrue(row.getBoolean(1)); }
+        }
+    }
+
+    @Test
     void pdfPageBoundaryAndCaseFileCountAreEnforced() throws Exception {
         var owner = registerTestUser();
         UUID caseId = createHttpCase(owner, tokenUserId(owner));
@@ -1065,6 +1363,7 @@ class CaseFlowIntegrationTest {
             uploadTestFile(owner, caseId, new MockMultipartFile("file", "증거.png", "image/png", testPng()));
         }
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FILE_005"));
@@ -1085,6 +1384,7 @@ class CaseFlowIntegrationTest {
             assertEquals(5, statement.executeUpdate());
         }
         mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FILE_005"));
@@ -1144,6 +1444,290 @@ class CaseFlowIntegrationTest {
         assertTrue(Files.exists(uploadRoot.resolve(fileId + ".upload")));
     }
 
+    @Test
+    void malwareRejectionAndScannerOutageRollbackOriginalAndDatabase() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        long before;
+        try (var files = Files.list(uploadRoot)) {
+            before = files.count();
+        }
+        for (var code : List.of(ErrorCode.UNSAFE_FILE, ErrorCode.MALWARE_SCAN_UNAVAILABLE)) {
+            org.mockito.Mockito.doThrow(new BusinessException(code))
+                    .when(malwareScanner).assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+            mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                            .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
+                            .header("Authorization", "Bearer " + owner.accessToken()))
+                    .andExpect(status().is(code.status().value()))
+                    .andExpect(jsonPath("$.code").value(code.code()));
+        }
+        try (var files = Files.list(uploadRoot)) {
+            assertEquals(before, files.count());
+        }
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT (SELECT count(*) FROM casework.files WHERE case_id = ?),
+                         (SELECT count(*) FROM ops.outbox_events WHERE event_type = 'FILE_UPLOADED'
+                          AND payload->>'caseId' = ?)
+                     """)) {
+            statement.setObject(1, caseId);
+            statement.setString(2, caseId.toString());
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals(0, row.getInt(1));
+                assertEquals(0, row.getInt(2));
+            }
+        }
+    }
+
+    @Test
+    void successfulScanRecordsProviderAndTimestamp() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID fileId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "증거.png", "image/png", testPng()));
+        org.mockito.Mockito.verify(malwareScanner).assertClean(uploadRoot.resolve(fileId + ".upload"));
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT malware_status, malware_scan_provider, malware_scanned_at
+                     FROM casework.files WHERE id = ?
+                     """)) {
+            statement.setObject(1, fileId);
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals("clean", row.getString(1));
+                assertEquals("clamav", row.getString(2));
+                assertTrue(row.getTimestamp(3) != null);
+            }
+        }
+    }
+
+    @Test
+    void freeIsLimitedToTenAndPaidHasNoDailyCountOrByteCap() throws Exception {
+        UUID free = tokenUserId(registerTestUser());
+        for (int i = 0; i < 10; i++) {
+            assertEquals("OK", consumeUploadAs(free, 1));
+        }
+        assertEquals("PLAN_LIMIT", consumeUploadAs(free, 1));
+        UUID paid = tokenUserId(registerTestUser());
+        setPaidPlan(paid, false);
+        seedUploadUsage(paid, 299, 299, 0);
+        assertEquals("OK", consumeUploadAs(paid, 1));
+        assertEquals("OK", consumeUploadAs(paid, 1));
+        UUID volumeLimited = tokenUserId(registerTestUser());
+        setPaidPlan(volumeLimited, false);
+        seedUploadUsage(volumeLimited, 1, 1073741823L, 0);
+        assertEquals("OK", consumeUploadAs(volumeLimited, 1));
+        assertEquals("OK", consumeUploadAs(volumeLimited, 20971520));
+    }
+
+    @Test
+    void expiredPaidPlanFallsBackToFreeAndUtcDayResetsUsage() throws Exception {
+        UUID user = tokenUserId(registerTestUser());
+        setPaidPlan(user, true);
+        seedUploadUsage(user, 10, 10, 0);
+        assertEquals("PLAN_LIMIT", consumeUploadAs(user, 1));
+        UUID nextDay = tokenUserId(registerTestUser());
+        seedUploadUsage(nextDay, 300, 1073741824L, -1);
+        assertEquals("OK", consumeUploadAs(nextDay, 1));
+    }
+
+    @Test
+    void concurrentReservationsCannotExceedFreePlan() throws Exception {
+        UUID user = tokenUserId(registerTestUser());
+        seedUploadUsage(user, 9, 9, 0);
+        Callable<String> consume = () -> consumeUploadAs(user, 1);
+        var results = concurrently(List.of(consume, consume, consume, consume));
+        assertEquals(1, results.stream().filter("OK"::equals).count());
+        assertEquals(3, results.stream().filter("PLAN_LIMIT"::equals).count());
+    }
+
+    @Test
+    void applicationCannotUpgradePlanOrReadAnotherUsersUsage() throws Exception {
+        UUID owner = tokenUserId(registerTestUser());
+        UUID other = tokenUserId(registerTestUser());
+        setPaidPlan(other, false);
+        seedUploadUsage(other, 1, 1, 0);
+        try (var connection = appConnection()) {
+            setDatabaseUser(connection, owner);
+            try (var statement = connection.createStatement()) {
+                assertEquals("42501", assertThrows(SQLException.class, () -> statement.executeUpdate(
+                        "INSERT INTO identity.user_plans VALUES ('" + owner + "', 'PAID', now() + interval '1 day')"))
+                        .getSQLState());
+            }
+            connection.rollback();
+            setDatabaseUser(connection, owner);
+            try (var statement = connection.createStatement();
+                 var row = statement.executeQuery("SELECT count(*) FROM identity.user_plans")) {
+                row.next();
+                assertEquals(0, row.getInt(1));
+            }
+            try (var statement = connection.createStatement();
+                 var row = statement.executeQuery("SELECT count(*) FROM casework.daily_upload_usage")) {
+                row.next();
+                assertEquals(0, row.getInt(1));
+            }
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void duplicateUploadReturnsSameFileWithoutRescanOrExtraQuota() throws Exception {
+        var owner = registerTestUser();
+        UUID user = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, user);
+        UUID key = UUID.randomUUID();
+        var file = new MockMultipartFile("file", "증거.png", "image/png", testPng());
+        String first = uploadWithKey(owner, caseId, key, file).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String second = uploadWithKey(owner, caseId, key, file).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(first).path("data").path("id").asString();
+        assertEquals(id, objectMapper.readTree(second).path("data").path("id").asString());
+        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
+                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+        assertEquals(1, outboxCount(UUID.fromString(id)));
+        assertUsageAttempts(user, 1);
+        uploadWithKey(owner, caseId, key, new MockMultipartFile("file", "다른이름.png", "image/png", testPng()))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FILE_010"));
+        UUID otherCase = createHttpCase(owner, user);
+        uploadWithKey(owner, otherCase, key, file).andExpect(status().isConflict());
+        assertUsageAttempts(user, 1);
+    }
+
+    @Test
+    void failedUploadReplayDoesNotRepeatScannerOrRefundSafetyUsage() throws Exception {
+        var owner = registerTestUser();
+        UUID user = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, user);
+        UUID key = UUID.randomUUID();
+        var file = new MockMultipartFile("file", "증거.png", "image/png", testPng());
+        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.MALWARE_SCAN_UNAVAILABLE))
+                .when(malwareScanner).assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+        for (int i = 0; i < 2; i++) {
+            uploadWithKey(owner, caseId, key, file).andExpect(status().isServiceUnavailable());
+        }
+        assertUsageAttempts(user, 1);
+        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
+                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+    }
+
+    @Test
+    void concurrentSameKeyUploadsCreateOnlyOneFile() throws Exception {
+        var owner = registerTestUser();
+        UUID user = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, user);
+        UUID key = UUID.randomUUID();
+        byte[] png = testPng();
+        Callable<Integer> upload = () -> uploadWithKey(owner, caseId, key,
+                new MockMultipartFile("file", "증거.png", "image/png", png))
+                .andReturn().getResponse().getStatus();
+        var results = concurrently(List.of(upload, upload));
+        assertTrue(results.contains(201));
+        assertTrue(results.stream().allMatch(code -> code == 201 || code == 409));
+        uploadWithKey(owner, caseId, key, new MockMultipartFile("file", "증거.png", "image/png", png))
+                .andExpect(status().isCreated());
+        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
+                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+        assertUsageAttempts(user, 1);
+    }
+
+    @Test
+    void uploadHeaderAndFreePlanLimitAreEnforcedButPaidCanContinue() throws Exception {
+        var owner = registerTestUser();
+        UUID user = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, user);
+        var file = new MockMultipartFile("file", "증거.png", "image/png", testPng());
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+                        .header("Idempotency-Key", "invalid")
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(status().isBadRequest());
+        seedUploadUsage(user, 10, 10, 0);
+        uploadWithKey(owner, caseId, UUID.randomUUID(), file)
+                .andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.code").value("FILE_009"));
+        setPaidPlan(user, false);
+        seedUploadUsage(user, 300, 300, 0);
+        uploadWithKey(owner, caseId, UUID.randomUUID(), file)
+                .andExpect(status().isCreated());
+        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
+                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions uploadWithKey(
+            AuthTokenResponse owner, UUID caseId, UUID key, MockMultipartFile file) throws Exception {
+        return mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+                .header("Idempotency-Key", key.toString())
+                .header("Authorization", "Bearer " + owner.accessToken()));
+    }
+
+    private void setPaidPlan(UUID user, boolean expired) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO identity.user_plans VALUES (?, 'PAID', now() + make_interval(days => ?))
+                     ON CONFLICT (user_id) DO UPDATE SET plan_code = 'PAID', expires_at = EXCLUDED.expires_at
+                     """)) {
+            statement.setObject(1, user);
+            statement.setInt(2, expired ? -1 : 1);
+            statement.executeUpdate();
+        }
+    }
+
+    private void seedUploadUsage(UUID user, int attempts, long bytes, int dayOffset) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     INSERT INTO casework.daily_upload_usage VALUES (?, (now() AT TIME ZONE 'UTC')::date + ?, ?, ?)
+                     ON CONFLICT (user_id, usage_date) DO UPDATE
+                     SET attempts = EXCLUDED.attempts, size_bytes = EXCLUDED.size_bytes
+                     """)) {
+            statement.setObject(1, user);
+            statement.setInt(2, dayOffset);
+            statement.setInt(3, attempts);
+            statement.setLong(4, bytes);
+            statement.executeUpdate();
+        }
+    }
+
+    private String consumeUploadAs(UUID user, long bytes) throws SQLException {
+        try (var connection = appConnection()) {
+            setDatabaseUser(connection, user);
+            try (var statement = connection.prepareStatement("SELECT casework.consume_daily_upload(?)")) {
+                statement.setLong(1, bytes);
+                try (var row = statement.executeQuery()) {
+                    row.next();
+                    String result = row.getString(1);
+                    connection.commit();
+                    return result;
+                }
+            }
+        }
+    }
+
+    private void setDatabaseUser(Connection connection, UUID user) throws SQLException {
+        connection.setAutoCommit(false);
+        try (var statement = connection.prepareStatement("SELECT set_config('app.user_id', ?, true)")) {
+            statement.setString(1, user.toString());
+            statement.execute();
+        }
+    }
+
+    private void assertUsageAttempts(UUID user, int expected) throws SQLException {
+        try (var connection = adminConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT attempts FROM casework.daily_upload_usage
+                     WHERE user_id = ? AND usage_date = (now() AT TIME ZONE 'UTC')::date
+                     """)) {
+            statement.setObject(1, user);
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals(expected, row.getInt(1));
+            }
+        }
+    }
+
     private void makeFilePurgeDue(UUID fileId) throws SQLException {
         try (var connection = adminConnection();
              var statement = connection.prepareStatement("""
@@ -1176,11 +1760,12 @@ class CaseFlowIntegrationTest {
     }
 
     private UUID uploadTestFile(AuthTokenResponse owner, UUID caseId, MockMultipartFile file) throws Exception {
-        String response = mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId).file(file)
+        String response = mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
+                        .header("Idempotency-Key", UUID.randomUUID().toString()).file(file)
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.lifecycleStatus").value("UPLOADED"))
-                .andExpect(jsonPath("$.data.malwareStatus").value("pending"))
+                .andExpect(jsonPath("$.data.malwareStatus").value("clean"))
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(objectMapper.readTree(response).path("data").path("id").asString());
     }
@@ -1303,6 +1888,828 @@ class CaseFlowIntegrationTest {
             assertEquals(64, stored.length());
             assertTrue(!stored.equals(rawToken));
         }
+    }
+
+    @Test
+    void chatCommitsQuestionBeforeGenerationAndReplaysOnlyStoredAnswer() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            // 앱 풀 크기가 1이어도 API 호출 중 DB를 사용할 수 있어야 한다.
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT 1", Integer.class));
+            try (var connection = adminConnection(); var statement = connection.prepareStatement(
+                    "SELECT question, answer, status FROM casework.chat_turns WHERE case_id = ?")) {
+                statement.setObject(1, caseId);
+                try (var rows = statement.executeQuery()) {
+                    assertTrue(rows.next());
+                    assertEquals("누수가 발생했어요", rows.getString(1));
+                    org.junit.jupiter.api.Assertions.assertNull(rows.getString(2));
+                    assertEquals("RUNNING", rows.getString(3));
+                }
+            }
+            return chatAnswer();
+        });
+        sendChat(owner, caseId, key, "누수가 발생했어요")
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.answer").value("언제 발생했나요?"))
+                .andExpect(jsonPath("$.data.status").doesNotExist());
+        sendChat(owner, caseId, key, "누수가 발생했어요").andExpect(status().isOk());
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].retryAllowed").value(false));
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatReceivesOnlyConfirmedEvidenceAsReviewContext() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "확정된 누수 자료")).andExpect(status().isOk());
+        stubChat();
+        sendChat(fixture.owner(), fixture.caseId(), UUID.randomUUID(), "이 자료에서 확인할 점은 무엇인가요?")
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<List<kr.co.legalai.chat.entity.ChatInput>> capture = org.mockito.ArgumentCaptor.captor();
+        org.mockito.Mockito.verify(openAiChat).generate(capture.capture());
+        assertTrue(capture.getValue().stream().anyMatch(input -> input.content().contains("확정된 누수 자료")));
+        assertTrue(capture.getValue().stream().anyMatch(input -> input.content().contains("진위·법적 효력·완전성은 확인되지 않은 주장 자료")));
+        assertTrue(capture.getValue().stream().mapToInt(input -> input.content().length()).sum() <= 16000);
+    }
+
+    @Test
+    void chatEnforcesOwnershipForSendListAndRetryAndDatabaseRls() throws Exception {
+        var owner = registerTestUser();
+        var other = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        stubChat();
+        sendChat(owner, caseId, key, "질문").andExpect(status().isOk());
+        sendChat(other, caseId, UUID.randomUUID(), "질문").andExpect(status().isNotFound());
+        chatHistory(other, caseId).andExpect(status().isNotFound());
+        retryChat(other, caseId, key, 1).andExpect(status().isNotFound());
+        try (var connection = appConnection()) {
+            connection.setAutoCommit(false);
+            try (var statement = connection.createStatement()) {
+                statement.execute("SELECT set_config('app.user_id', '" + tokenUserId(other) + "', true)");
+                try (var rows = statement.executeQuery("SELECT count(*) FROM casework.chat_turns")) {
+                    rows.next();
+                    assertEquals(0, rows.getInt(1));
+                }
+            }
+        }
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatFailureNeedsExplicitIdempotentRetryWithoutDuplicatingQuestion() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList()))
+                .thenThrow(new BusinessException(ErrorCode.CHAT_GENERATION_FAILED)).thenReturn(chatAnswer());
+        sendChat(owner, caseId, key, "질문").andExpect(status().isServiceUnavailable());
+        sendChat(owner, caseId, key, "질문").andExpect(status().isServiceUnavailable());
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items[0].answer").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].retryAllowed").value(true));
+        retryChat(owner, caseId, key, 1).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attempt").value(2));
+        retryChat(owner, caseId, key, 1).andExpect(status().isOk());
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items.length()").value(1));
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(2)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatValidatesKeysInputAndRetryGeneration() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        stubChat();
+        sendChat(owner, caseId, key, "질문").andExpect(status().isOk());
+        sendChat(owner, caseId, key, "다른 질문").andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHAT_001"));
+        sendChat(owner, caseId, UUID.randomUUID(), " ").andExpect(status().isBadRequest());
+        sendChat(owner, caseId, UUID.randomUUID(), "x".repeat(4001)).andExpect(status().isBadRequest());
+        retryChat(owner, caseId, key, 3).andExpect(status().isConflict());
+        retryChat(owner, caseId, key, 0).andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/cases/{id}/chat/turns", caseId)
+                .header("Authorization", "Bearer " + owner.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"content\":\"질문\"}")).andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/cases/{id}/chat/turns", caseId)
+                .header("Authorization", "Bearer " + owner.accessToken()).header("Idempotency-Key", UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"content\":"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void chatConcurrentRequestDoesNotRegenerateOrHoldDatabaseConnection() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID secondCase = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            entered.countDown();
+            assertTrue(release.await(10, TimeUnit.SECONDS));
+            return chatAnswer();
+        });
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var first = executor.submit(() -> sendChat(owner, caseId, key, "질문").andReturn().getResponse().getStatus());
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS));
+                sendChat(owner, caseId, key, "질문").andExpect(status().isTooManyRequests());
+                sendChat(owner, secondCase, UUID.randomUUID(), "질문").andExpect(status().isTooManyRequests());
+                chatHistory(owner, caseId).andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.items[0].answer").doesNotExist())
+                        .andExpect(jsonPath("$.data.items[0].retryAllowed").value(false));
+            } finally { release.countDown(); }
+            assertEquals(200, first.get(10, TimeUnit.SECONDS));
+        }
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatRetriesDatabaseSaveWithoutCallingModelAgain() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        stubChat();
+        org.mockito.Mockito.doThrow(new org.springframework.dao.TransientDataAccessResourceException("비밀 SQL 본문"))
+                .doCallRealMethod().when(chatRepository).complete(org.mockito.ArgumentMatchers.eq(caseId),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+        sendChat(owner, caseId, UUID.randomUUID(), "질문").andExpect(status().isOk());
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+        org.mockito.Mockito.verify(chatRepository, org.mockito.Mockito.times(2)).complete(org.mockito.ArgumentMatchers.eq(caseId),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void chatDoesNotReturnAnswerWhenDatabaseSaveFails() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        stubChat();
+        org.mockito.Mockito.doThrow(new org.springframework.dao.TransientDataAccessResourceException("비밀 SQL 본문"))
+                .when(chatRepository).complete(org.mockito.ArgumentMatchers.eq(caseId), org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any());
+        sendChat(owner, caseId, UUID.randomUUID(), "질문").andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("CHAT_005")).andExpect(jsonPath("$.data").doesNotExist());
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items[0].answer").doesNotExist());
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatRecoversAbandonedAttemptOnlyOnExplicitRetryAndRejectsLateSave() throws Exception {
+        var owner = registerTestUser();
+        UUID userId = tokenUserId(owner);
+        UUID caseId = createHttpCase(owner, userId);
+        UUID key = UUID.randomUUID();
+        try (var connection = adminConnection(); var statement = connection.prepareStatement("""
+                INSERT INTO casework.chat_turns(case_id, id, owner_user_id, question, status, started_at)
+                VALUES (?, ?, ?, '질문', 'RUNNING', now() - interval '4 minutes')
+                """)) {
+            statement.setObject(1, caseId); statement.setObject(2, key); statement.setObject(3, userId);
+            statement.executeUpdate();
+        }
+        chatHistory(owner, caseId).andExpect(jsonPath("$.data.items[0].retryAllowed").value(true));
+        org.mockito.Mockito.verifyNoInteractions(openAiChat);
+        stubChat();
+        retryChat(owner, caseId, key, 1).andExpect(status().isOk()).andExpect(jsonPath("$.data.attempt").value(2));
+        try (var connection = appConnection(); var statement = connection.createStatement()) {
+            connection.setAutoCommit(false);
+            statement.execute("SELECT set_config('app.user_id', '" + userId + "', true)");
+            assertEquals(0, statement.executeUpdate("UPDATE casework.chat_turns SET answer = '늦은 답변' "
+                    + "WHERE id = '" + key + "' AND attempt = 1 AND status = 'RUNNING'"));
+        }
+    }
+
+    @Test
+    void chatHistoryIsBoundedAndOldFailedTurnCannotBeRetriedAfterNewQuestion() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID failedKey = UUID.randomUUID();
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList()))
+                .thenThrow(new BusinessException(ErrorCode.CHAT_GENERATION_FAILED)).thenReturn(chatAnswer());
+        sendChat(owner, caseId, failedKey, "실패한 질문").andExpect(status().isServiceUnavailable());
+        for (int i = 0; i < 7; i++) sendChat(owner, caseId, UUID.randomUUID(), "질문" + i).andExpect(status().isOk());
+        retryChat(owner, caseId, failedKey, 1).andExpect(status().isConflict());
+        org.mockito.ArgumentCaptor<List<kr.co.legalai.chat.entity.ChatInput>> capture = org.mockito.ArgumentCaptor.captor();
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(8)).generate(capture.capture());
+        assertEquals(12, capture.getValue().size()); // 사건 초기 진술 + 완성된 5턴(10메시지) + 현재 질문
+        assertTrue(capture.getValue().stream().anyMatch(input -> input.content().contains("계약서 누수 분쟁")));
+        mockMvc.perform(get("/api/v1/cases/{id}/chat/turns", caseId).param("pageSize", "2")
+                .header("Authorization", "Bearer " + owner.accessToken()))
+                .andExpect(jsonPath("$.data.items.length()").value(2)).andExpect(jsonPath("$.data.hasNext").value(true));
+    }
+
+    @Test
+    void chatIsHiddenWhenCaseDeletedDuringGeneration() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            try (var connection = adminConnection(); var statement = connection.prepareStatement(
+                    "UPDATE casework.cases SET deleted_at = now(), hard_delete_after = now() + interval '7 days' WHERE id = ?")) {
+                statement.setObject(1, caseId); statement.executeUpdate();
+            }
+            return chatAnswer();
+        });
+        sendChat(owner, caseId, UUID.randomUUID(), "질문").andExpect(status().isNotFound());
+        chatHistory(owner, caseId).andExpect(status().isNotFound());
+        // 삭제된 사건의 내부 RUNNING 행이 새 사건을 영구 차단하지 않는다.
+        stubChat();
+        UUID next = createHttpCase(owner, tokenUserId(owner));
+        sendChat(owner, next, UUID.randomUUID(), "질문").andExpect(status().isOk());
+    }
+
+    @Test
+    void chatInstanceConcurrencyIsSeparateFromUserAndDailyPlanLimits() throws Exception {
+        var firstUser = registerTestUser();
+        var secondUser = registerTestUser();
+        var thirdUser = registerTestUser();
+        UUID firstCase = createHttpCase(firstUser, tokenUserId(firstUser));
+        UUID secondCase = createHttpCase(secondUser, tokenUserId(secondUser));
+        UUID thirdCase = createHttpCase(thirdUser, tokenUserId(thirdUser));
+        var entered = new CountDownLatch(2);
+        var release = new CountDownLatch(1);
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            entered.countDown();
+            assertTrue(release.await(10, TimeUnit.SECONDS));
+            return chatAnswer();
+        });
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> sendChat(firstUser, firstCase, UUID.randomUUID(), "질문")
+                    .andReturn().getResponse().getStatus());
+            var second = executor.submit(() -> sendChat(secondUser, secondCase, UUID.randomUUID(), "질문")
+                    .andReturn().getResponse().getStatus());
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS));
+                sendChat(thirdUser, thirdCase, UUID.randomUUID(), "질문").andExpect(status().isTooManyRequests());
+                chatHistory(thirdUser, thirdCase).andExpect(jsonPath("$.data.items[0].retryAllowed").value(true));
+            } finally { release.countDown(); }
+            assertEquals(200, first.get(10, TimeUnit.SECONDS));
+            assertEquals(200, second.get(10, TimeUnit.SECONDS));
+        }
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(2)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void chatConfigurationFailureDoesNotBlockStoredRepliesOrSaveNewQuestion() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID key = UUID.randomUUID();
+        stubChat();
+        sendChat(owner, caseId, key, "질문").andExpect(status().isOk());
+        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.INTEGRATION_NOT_CONFIGURED))
+                .when(openAiChat).requireConfigured();
+        sendChat(owner, caseId, UUID.randomUUID(), "새 질문").andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("COMMON_002"));
+        sendChat(owner, caseId, key, "질문").andExpect(status().isOk());
+        chatHistory(owner, caseId).andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(1));
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.times(1)).generate(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    private kr.co.legalai.chat.entity.GeneratedAnswer chatAnswer() {
+        return kr.co.legalai.chat.entity.GeneratedAnswer.builder().text("언제 발생했나요?")
+                .model("test-model").responseId("resp_test").inputTokens(12).outputTokens(7).build();
+    }
+
+    private void stubChat() {
+        org.mockito.Mockito.when(openAiChat.generate(org.mockito.ArgumentMatchers.anyList())).thenReturn(chatAnswer());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions sendChat(AuthTokenResponse user, UUID caseId,
+            UUID key, String content) throws Exception {
+        return mockMvc.perform(post("/api/v1/cases/{caseId}/chat/turns", caseId)
+                .header("Authorization", "Bearer " + user.accessToken()).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                        new kr.co.legalai.chat.dto.request.SendChatRequest(content))));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions retryChat(AuthTokenResponse user, UUID caseId,
+            UUID key, int attempt) throws Exception {
+        return mockMvc.perform(post("/api/v1/cases/{caseId}/chat/turns/{id}/retry", caseId, key)
+                .header("Authorization", "Bearer " + user.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"expectedAttempt\":" + attempt + "}"));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions chatHistory(AuthTokenResponse user, UUID caseId) throws Exception {
+        return mockMvc.perform(get("/api/v1/cases/{caseId}/chat/turns", caseId)
+                .header("Authorization", "Bearer " + user.accessToken()));
+    }
+
+    @Test
+    void lawClassificationAndChunkTopicsHaveIndependentDatabaseConstraints() throws Exception {
+        try (var connection = adminConnection(); var statement = connection.createStatement()) {
+            UUID source = UUID.randomUUID();
+            UUID document = UUID.randomUUID();
+            UUID chunk = UUID.randomUUID();
+            statement.executeUpdate("""
+                    INSERT INTO knowledge.legal_sources(id, source_code, source_type, publisher, authority_level)
+                    VALUES ('%s', '%s', 'law', 'test', 1)
+                    """.formatted(source, source));
+            statement.executeUpdate("""
+                    INSERT INTO knowledge.legal_documents(id, source_id, external_id, document_type, title,
+                        version_label, source_url, raw_text, content_hash)
+                    VALUES ('%s', '%s', 'test', 'law', '민법', 'v1', 'https://www.law.go.kr', 'test', '%s')
+                    """.formatted(document, source, "a".repeat(64)));
+            try (var rows = statement.executeQuery("SELECT law_kind FROM knowledge.legal_documents WHERE id='" + document + "'")) {
+                rows.next();
+                org.junit.jupiter.api.Assertions.assertNull(rows.getString(1));
+            }
+            statement.executeUpdate("UPDATE knowledge.legal_documents SET law_kind='ACT' WHERE id='" + document + "'");
+            assertEquals("23514", assertThrows(SQLException.class, () -> statement.executeUpdate(
+                    "UPDATE knowledge.legal_documents SET law_kind='민법' WHERE id='" + document + "'"
+            )).getSQLState());
+            assertEquals("23514", assertThrows(SQLException.class, () -> statement.executeUpdate(
+                    "UPDATE knowledge.legal_documents SET document_type='precedent' WHERE id='" + document + "'"
+            )).getSQLState());
+            statement.executeUpdate("""
+                    INSERT INTO knowledge.legal_chunks(id, document_id, chunk_type, content, ordinal)
+                    VALUES ('%s', '%s', 'article', '수선의무', 0)
+                    """.formatted(chunk, document));
+            try (var update = connection.prepareStatement("UPDATE knowledge.legal_chunks SET metadata=?::jsonb WHERE id=?")) {
+                update.setObject(2, chunk);
+                for (String valid : List.of("{}", "{\"topic_tags\":[]}",
+                        "{\"topic_tags\":[\"housing_lease\",\"repair_duty\"]}")) {
+                    update.setString(1, valid);
+                    assertEquals(1, update.executeUpdate());
+                }
+                for (String invalid : List.of("{\"topic_tags\":null}", "{\"topic_tags\":\"housing_lease\"}",
+                        "{\"topic_tags\":[1]}", "{\"topic_tags\":[null]}", "{\"topic_tags\":[{}]}",
+                        "{\"topic_tags\":[\"\"]}", "{\"topic_tags\":[\"   \"]}")) {
+                    update.setString(1, invalid);
+                    assertEquals("23514", assertThrows(SQLException.class, update::executeUpdate).getSQLState());
+                }
+            }
+        }
+    }
+
+    @Test
+    void ocrPreservesMachineTextAndConfirmsRevisionBeforePurgingOriginal() throws Exception {
+        var fixture = ocrFixture();
+        UUID analysisId = UUID.randomUUID();
+        ocrUpdate("""
+                INSERT INTO aiops.analysis_runs(id, case_id, trigger_type, version_no, idempotency_key,
+                    input_fingerprint, status)
+                VALUES (?, ?, 'initial', 1, ?, ?, 'succeeded')
+                """, analysisId, fixture.caseId(), UUID.randomUUID().toString(), "a".repeat(64));
+        UUID revision = saveOcr(fixture, 0, "사용자가 확인한 계약 내용");
+        assertTrue(Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        ocrView(fixture).andExpect(jsonPath("$.data.rawText").value("기계가 읽은 계약 내용"))
+                .andExpect(jsonPath("$.data.latestRevision.current").value(false))
+                .andExpect(jsonPath("$.data.confirmedRevision").doesNotExist());
+        confirmOcr(fixture, revision).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.current").value(true));
+        assertTrue(!Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        assertPurgeState(fixture.fileId(), "purged", 1);
+        try (var connection = adminConnection(); var query = connection.prepareStatement(
+                "SELECT stale_at, stale_reason FROM aiops.analysis_runs WHERE id = ?")) {
+            query.setObject(1, analysisId);
+            try (var row = query.executeQuery()) {
+                assertTrue(row.next());
+                assertTrue(row.getTimestamp(1) != null);
+                assertEquals("ocr_changed", row.getString(2));
+            }
+        }
+        confirmOcr(fixture, revision).andExpect(status().isOk());
+        assertPurgeState(fixture.fileId(), "purged", 1);
+        ocrView(fixture).andExpect(jsonPath("$.data.rawText").value("기계가 읽은 계약 내용"))
+                .andExpect(jsonPath("$.data.confirmedRevision.correctedText").value("사용자가 확인한 계약 내용"));
+        mockMvc.perform(get("/api/v1/cases/{caseId}", fixture.caseId())
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value(2));
+    }
+
+    @Test
+    void ocrRevisionReplayIsIdempotentAndOlderDraftCannotReplaceLatest() throws Exception {
+        var fixture = ocrFixture();
+        UUID first = saveOcr(fixture, 0, "첫 수정");
+        assertEquals(first, saveOcr(fixture, 0, "첫 수정"));
+        mockMvc.perform(post(ocrPath(fixture) + "-revisions")
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("extractionId", fixture.extractionId(), "expectedRevision", 0,
+                                        "correctedText", "충돌하는 수정"))))
+                .andExpect(status().isConflict());
+        UUID second = saveOcr(fixture, 1, "두 번째 수정");
+        confirmOcr(fixture, first).andExpect(status().isConflict());
+        confirmOcr(fixture, second).andExpect(status().isOk());
+        UUID third = saveOcr(fixture, 2, "원본 삭제 후 수정");
+        ocrView(fixture).andExpect(jsonPath("$.data.confirmedRevision.id").value(second.toString()));
+        confirmOcr(fixture, third).andExpect(status().isOk());
+        mockMvc.perform(get(ocrPath(fixture) + "-revisions?page=1&pageSize=2")
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.hasNext").value(true))
+                .andExpect(jsonPath("$.data.items[0].revision").value(3))
+                .andExpect(jsonPath("$.data.items[1].current").value(false));
+        assertPurgeState(fixture.fileId(), "purged", 1);
+    }
+
+    @Test
+    void ocrRequiresConsentAndEnforcesOwnershipAndInputLimits() throws Exception {
+        var fixture = ocrFixture();
+        var other = registerTestUser();
+        mockMvc.perform(post(ocrPath(fixture)).header("Idempotency-Key", UUID.randomUUID())
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"externalOcrAccepted\":false}"))
+                .andExpect(status().isBadRequest());
+        for (String suffix : List.of("", "-revisions")) {
+            mockMvc.perform(get(ocrPath(fixture) + suffix)
+                            .header("Authorization", "Bearer " + other.accessToken()))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(get(ocrPath(fixture) + suffix)).andExpect(status().isUnauthorized());
+        }
+        mockMvc.perform(post(ocrPath(fixture)).header("Idempotency-Key", UUID.randomUUID())
+                        .header("Authorization", "Bearer " + other.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"externalOcrAccepted\":true}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post(ocrPath(fixture) + "-revisions")
+                        .header("Authorization", "Bearer " + other.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("extractionId", fixture.extractionId(), "expectedRevision", 0,
+                                        "correctedText", "다른 사용자"))))
+                .andExpect(status().isNotFound());
+        for (String text : List.of(" ", "x".repeat(100001), "x" + (char) 0)) {
+            mockMvc.perform(post(ocrPath(fixture) + "-revisions")
+                            .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                            .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                    java.util.Map.of("extractionId", fixture.extractionId(), "expectedRevision", 0,
+                                            "correctedText", text))))
+                    .andExpect(status().isBadRequest());
+        }
+        UUID revision = saveOcr(fixture, 0, "확인할 내용");
+        mockMvc.perform(post("/api/v1/cases/{caseId}/files/{fileId}/confirm", fixture.caseId(), fixture.fileId())
+                        .header("Authorization", "Bearer " + other.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("revisionId", revision, "sensitiveDataReviewed", true))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/v1/cases/{caseId}/files/{fileId}/confirm", fixture.caseId(), fixture.fileId())
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("revisionId", revision, "sensitiveDataReviewed", false))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get(ocrPath(fixture) + "-revisions?page=0")
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.times(1))
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void ocrFailureReplayDoesNotCallAgainAndExplicitNewKeyRetries() throws Exception {
+        var fixture = pendingOcrFixture();
+        UUID key = UUID.randomUUID();
+        org.mockito.Mockito.when(openAiOcr.extract(org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.anyString())).thenThrow(new BusinessException(ErrorCode.OCR_UNAVAILABLE));
+        startOcr(fixture, key).andExpect(status().isServiceUnavailable());
+        startOcr(fixture, key).andExpect(status().isServiceUnavailable());
+        ocrView(fixture).andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.rawText").doesNotExist());
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.times(1))
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+        org.mockito.Mockito.doReturn(ocrAnswer()).when(openAiOcr).extract(
+                org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+        startOcr(fixture, UUID.randomUUID()).andExpect(status().isOk());
+        assertTrue(Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+    }
+
+    @Test
+    void ocrConcurrentRequestsDoNotHoldDatabaseConnectionOrRunTwice() throws Exception {
+        var fixture = pendingOcrFixture();
+        UUID key = UUID.randomUUID();
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        org.mockito.Mockito.when(openAiOcr.extract(org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+                    entered.countDown();
+                    assertTrue(release.await(10, TimeUnit.SECONDS));
+                    return ocrAnswer();
+                });
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var first = executor.submit(() -> startOcr(fixture, key).andReturn().getResponse().getStatus());
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS));
+                startOcr(fixture, key).andExpect(status().isTooManyRequests());
+                startOcr(fixture, UUID.randomUUID()).andExpect(status().isTooManyRequests());
+                ocrView(fixture).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("running"));
+            } finally {
+                release.countDown();
+            }
+            assertEquals(200, first.get(10, TimeUnit.SECONDS));
+        }
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.times(1))
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void ocrConfirmationRollbackKeepsOriginalAndDraft() throws Exception {
+        var fixture = ocrFixture();
+        UUID revision = saveOcr(fixture, 0, "확정할 내용");
+        ocrUpdate("""
+                INSERT INTO ops.outbox_events(event_type, aggregate_type, aggregate_id, idempotency_key, retention_expires_at)
+                VALUES ('TEST_CONFLICT', 'file', ?, ?, now() + interval '1 day')
+                """, fixture.fileId(), "ocr-confirmed:" + revision);
+        confirmOcr(fixture, revision).andExpect(status().isInternalServerError());
+        assertTrue(Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        ocrView(fixture).andExpect(jsonPath("$.data.confirmedRevision").doesNotExist())
+                .andExpect(jsonPath("$.data.latestRevision.current").value(false));
+        mockMvc.perform(get("/api/v1/cases/{caseId}", fixture.caseId())
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken()))
+                .andExpect(jsonPath("$.data.version").value(1));
+    }
+
+    @Test
+    void ocrPurgeFailureKeepsConfirmedTextAndBackgroundCleanupRetries() throws Exception {
+        var fixture = ocrFixture();
+        UUID revision = saveOcr(fixture, 0, "원본 삭제 장애에도 유지할 확정본");
+        Path original = uploadRoot.resolve(fixture.fileId() + ".upload");
+        Files.delete(original);
+        Files.createDirectory(original);
+        Path child = Files.createFile(original.resolve("block-delete"));
+        try {
+            confirmOcr(fixture, revision).andExpect(status().isOk());
+            assertPurgeState(fixture.fileId(), "retrying", 1);
+            confirmOcr(fixture, revision).andExpect(status().isOk());
+            assertPurgeState(fixture.fileId(), "retrying", 1);
+            ocrView(fixture).andExpect(jsonPath("$.data.confirmedRevision.correctedText")
+                    .value("원본 삭제 장애에도 유지할 확정본"));
+        } finally {
+            Files.delete(child);
+            Files.delete(original);
+        }
+        makeFilePurgeDue(fixture.fileId());
+        fileCleanupService.cleanup();
+        assertPurgeState(fixture.fileId(), "purged", 2);
+    }
+
+    @Test
+    void ocrLateResultAfterExpiryIsRejectedAndNeverSaved() throws Exception {
+        var fixture = pendingOcrFixture();
+        org.mockito.Mockito.when(openAiOcr.extract(org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+                    makeFilePurgeDue(fixture.fileId());
+                    fileCleanupService.cleanup();
+                    return ocrAnswer();
+                });
+        startOcr(fixture, UUID.randomUUID()).andExpect(status().isConflict());
+        ocrView(fixture).andExpect(jsonPath("$.data.status").value("failed"))
+                .andExpect(jsonPath("$.data.rawText").doesNotExist());
+        assertPurgeState(fixture.fileId(), "purged", 1);
+    }
+
+    @Test
+    void ocrMissingConfigurationAndExpiredOriginalDoNotSendFiles() throws Exception {
+        var fixture = pendingOcrFixture();
+        ocrView(fixture).andExpect(status().isConflict());
+        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.INTEGRATION_NOT_CONFIGURED))
+                .when(openAiOcr).requireConfigured();
+        startOcr(fixture, UUID.randomUUID()).andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("COMMON_002"));
+        ocrView(fixture).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("OCR_001"));
+        org.mockito.Mockito.doNothing().when(openAiOcr).requireConfigured();
+        makeFilePurgeDue(fixture.fileId());
+        startOcr(fixture, UUID.randomUUID()).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("OCR_005"));
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.never())
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void confirmedEvidenceExcludesMachineTextAndDraftsAndRejectsStaleVersion() throws Exception {
+        var fixture = ocrFixture();
+        String path = "/api/v1/cases/" + fixture.caseId() + "/confirmed-evidence";
+        String token = "Bearer " + fixture.owner().accessToken();
+        mockMvc.perform(get(path).header("Authorization", token)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.caseVersion").value(1)).andExpect(jsonPath("$.data.evidence.items").isEmpty());
+        UUID first = saveOcr(fixture, 0, "첫 확정 내용");
+        mockMvc.perform(get(path).header("Authorization", token)).andExpect(jsonPath("$.data.evidence.items").isEmpty());
+        confirmOcr(fixture, first).andExpect(status().isOk());
+        UUID second = saveOcr(fixture, 1, "아직 확정하지 않은 새 내용");
+        mockMvc.perform(get(path).header("Authorization", token)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.caseVersion").value(2))
+                .andExpect(jsonPath("$.data.evidence.items[0].revisionId").value(first.toString()))
+                .andExpect(jsonPath("$.data.evidence.items[0].correctedText").value("첫 확정 내용"))
+                .andExpect(jsonPath("$.data.evidence.items[0].rawText").doesNotExist())
+                .andExpect(jsonPath("$.data.evidence.items[0].confirmedAt").isNotEmpty());
+        assertTrue(!Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        confirmOcr(fixture, second).andExpect(status().isOk());
+        mockMvc.perform(get(path).param("expectedCaseVersion", "2").header("Authorization", token))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CASE_002"));
+        mockMvc.perform(get(path).param("expectedCaseVersion", "3").header("Authorization", token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.evidence.items[0].revisionId").value(second.toString()));
+    }
+
+    @Test
+    void caseEvidenceSearchRejectsUnauthorizedDraftAndStaleInputsBeforeEmbedding() throws Exception {
+        var fixture = ocrFixture();
+        String path = caseSearchPath(fixture);
+        String body = "{\"query\":\"집 수선\",\"expectedCaseVersion\":1}";
+        mockMvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        var other = registerTestUser();
+        mockMvc.perform(post(path).header("Authorization", "Bearer " + other.accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isNotFound());
+        UUID revision = saveOcr(fixture, 0, "확정 전 문서");
+        caseSearch(fixture, 1, 0).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("FILE_001"));
+        confirmOcr(fixture, revision).andExpect(status().isOk());
+        caseSearch(fixture, 1, 0).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CASE_002"));
+        caseSearch(fixture, 2, -1).andExpect(status().isBadRequest());
+        caseSearch(fixture, 2, 10000).andExpect(status().isBadRequest());
+        mockMvc.perform(post(path).header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"query\":\"집 수선\"}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(searchEmbeddings);
+    }
+
+    @Test
+    void caseEvidenceSearchUsesConfirmedExcerptAfterOriginalPurgeAndPreservesUnicode() throws Exception {
+        var fixture = ocrFixture();
+        String text = "가".repeat(649) + "😀끝";
+        UUID revision = saveOcr(fixture, 0, text);
+        confirmOcr(fixture, revision).andExpect(status().isOk());
+        saveOcr(fixture, 1, "미확정 새 초안");
+        assertTrue(!Files.exists(uploadRoot.resolve(fixture.fileId() + ".upload")));
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenAnswer(call -> {
+            assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT 1", Integer.class));
+            List<String> inputs = call.getArgument(0);
+            assertEquals(1, inputs.size());
+            assertTrue(inputs.getFirst().contains("확정 문서 발췌:\n"));
+            assertTrue(inputs.getFirst().contains("가".repeat(649)) || inputs.getFirst().contains("😀끝"));
+            assertTrue(!inputs.getFirst().contains("미확정 새 초안"));
+            assertTrue(!inputs.getFirst().contains("기계가 읽은"));
+            return List.of(vector);
+        });
+        caseSearch(fixture, 2, 0).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.caseVersion").value(2))
+                .andExpect(jsonPath("$.data.evidence.revisionId").value(revision.toString()))
+                .andExpect(jsonPath("$.data.evidence.text").value("가".repeat(649)))
+                .andExpect(jsonPath("$.data.evidence.end").value(649))
+                .andExpect(jsonPath("$.data.evidence.totalLength").value(652))
+                .andExpect(jsonPath("$.data.evidence.partial").value(true));
+        caseSearch(fixture, 2, 650).andExpect(status().isBadRequest());
+        caseSearch(fixture, 2, 649).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.evidence.text").value("😀끝"))
+                .andExpect(jsonPath("$.data.evidence.end").value(652));
+        org.mockito.Mockito.verify(searchEmbeddings, org.mockito.Mockito.times(2)).embed(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void caseEvidenceSearchDiscardsResultsWhenCaseChangesOrIsDeletedDuringEmbedding() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "집 수리비 지급 내역")).andExpect(status().isOk());
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.doAnswer(call -> {
+            ocrUpdate("UPDATE casework.cases SET version_no=version_no+1 WHERE id=?", fixture.caseId());
+            return List.of(vector);
+        }).when(searchEmbeddings).embed(org.mockito.ArgumentMatchers.anyList());
+        caseSearch(fixture, 2, 0).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CASE_002"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+        org.mockito.Mockito.doAnswer(call -> {
+            ocrUpdate("UPDATE casework.cases SET deleted_at=now(), hard_delete_after=now()+interval '30 days' WHERE id=?", fixture.caseId());
+            return List.of(vector);
+        }).when(searchEmbeddings).embed(org.mockito.ArgumentMatchers.anyList());
+        caseSearch(fixture, 3, 0).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("CASE_001"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    private String caseSearchPath(OcrFixture fixture) {
+        return "/api/v1/cases/" + fixture.caseId() + "/files/" + fixture.fileId() + "/legal-evidence/search";
+    }
+
+    @Test
+    void legalDraftRequiresOwnerAndSkipsGenerationForEmptySearch() throws Exception {
+        var fixture = ocrFixture();
+        confirmOcr(fixture, saveOcr(fixture, 0, "집 수리 확인 문서")).andExpect(status().isOk());
+        String path = "/api/v1/cases/" + fixture.caseId() + "/files/" + fixture.fileId() + "/legal-draft";
+        String body = "{\"query\":\"집 수선\",\"expectedCaseVersion\":2}";
+        mockMvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isUnauthorized());
+        var other = registerTestUser();
+        mockMvc.perform(post(path).header("Authorization", "Bearer " + other.accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isNotFound());
+        org.mockito.Mockito.verifyNoInteractions(searchEmbeddings);
+        float[] vector = new float[1536]; vector[0] = 1;
+        org.mockito.Mockito.when(searchEmbeddings.embed(org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of(vector));
+        mockMvc.perform(post(path).header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("INSUFFICIENT_EVIDENCE"))
+                .andExpect(jsonPath("$.data.findings").isEmpty())
+                .andExpect(jsonPath("$.data.evidence.text").value("집 수리 확인 문서"));
+        org.mockito.Mockito.verify(openAiChat, org.mockito.Mockito.never()).generateStructured(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions caseSearch(OcrFixture fixture, int version, int start) throws Exception {
+        return mockMvc.perform(post(caseSearchPath(fixture)).header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(java.util.Map.of(
+                        "query", "집 수선 근거", "expectedCaseVersion", version, "excerptStart", start))));
+    }
+
+    @Test
+    void confirmedEvidenceEnforcesOwnershipDeletionAndPageBounds() throws Exception {
+        var fixture = pendingOcrFixture();
+        var other = registerTestUser();
+        String path = "/api/v1/cases/" + fixture.caseId() + "/confirmed-evidence";
+        String token = "Bearer " + fixture.owner().accessToken();
+        mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + other.accessToken())).andExpect(status().isNotFound());
+        mockMvc.perform(get(path).param("page", "0").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(get(path).param("pageSize", "101").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(get(path).param("expectedCaseVersion", "0").header("Authorization", token)).andExpect(status().isBadRequest());
+        mockMvc.perform(delete("/api/v1/cases/{caseId}", fixture.caseId()).header("Authorization", token))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get(path).header("Authorization", token)).andExpect(status().isNotFound());
+        org.mockito.Mockito.verify(openAiOcr, org.mockito.Mockito.never())
+                .extract(org.mockito.ArgumentMatchers.any(byte[].class), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void confirmedEvidencePagesOnlyCurrentConfirmedRevisions() throws Exception {
+        var first = ocrFixture();
+        confirmOcr(first, saveOcr(first, 0, "첫 번째 파일")).andExpect(status().isOk());
+        UUID file = uploadTestFile(first.owner(), first.caseId(),
+                new MockMultipartFile("file", "두번째.pdf", "application/pdf", testPdf(1)));
+        var pending = new OcrFixture(first.owner(), first.caseId(), file, null);
+        var result = startOcr(pending, UUID.randomUUID()).andExpect(status().isOk()).andReturn();
+        UUID extraction = UUID.fromString(objectMapper.readTree(result.getResponse().getContentAsString()).path("data").path("extractionId").asString());
+        var second = new OcrFixture(first.owner(), first.caseId(), file, extraction);
+        confirmOcr(second, saveOcr(second, 0, "두 번째 파일")).andExpect(status().isOk());
+        String path = "/api/v1/cases/" + first.caseId() + "/confirmed-evidence";
+        String token = "Bearer " + first.owner().accessToken();
+        mockMvc.perform(get(path).param("pageSize", "1").header("Authorization", token)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.caseVersion").value(3)).andExpect(jsonPath("$.data.evidence.hasNext").value(true))
+                .andExpect(jsonPath("$.data.evidence.items[0].fileId").value(file.toString()));
+        mockMvc.perform(get(path).param("pageSize", "1").param("page", "2").param("expectedCaseVersion", "3")
+                        .header("Authorization", token)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.evidence.hasNext").value(false))
+                .andExpect(jsonPath("$.data.evidence.items[0].fileId").value(first.fileId().toString()));
+    }
+
+    private void ocrUpdate(String sql, Object... params) throws SQLException {
+        try (var connection = adminConnection(); var statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < params.length; i++) statement.setObject(i + 1, params[i]);
+            statement.executeUpdate();
+        }
+    }
+
+    private record OcrFixture(AuthTokenResponse owner, UUID caseId, UUID fileId, UUID extractionId) {}
+
+    private kr.co.legalai.file.entity.OcrText ocrAnswer() {
+        return kr.co.legalai.file.entity.OcrText.builder().text("기계가 읽은 계약 내용")
+                .model("ocr-test").responseId("ocr-response").inputTokens(100).outputTokens(20).build();
+    }
+
+    private OcrFixture pendingOcrFixture() throws Exception {
+        var owner = registerTestUser();
+        UUID caseId = createHttpCase(owner, tokenUserId(owner));
+        UUID fileId = uploadTestFile(owner, caseId,
+                new MockMultipartFile("file", "계약.png", "image/png", testPng()));
+        org.mockito.Mockito.when(openAiOcr.model()).thenReturn("ocr-test");
+        org.mockito.Mockito.when(openAiOcr.extract(org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+                    assertEquals(1, jdbcTemplate.queryForObject("SELECT 1", Integer.class));
+                    return ocrAnswer();
+                });
+        return new OcrFixture(owner, caseId, fileId, null);
+    }
+
+    private OcrFixture ocrFixture() throws Exception {
+        var fixture = pendingOcrFixture();
+        UUID key = UUID.randomUUID();
+        String result = startOcr(fixture, key)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        startOcr(fixture, key).andExpect(status().isOk());
+        return new OcrFixture(fixture.owner(), fixture.caseId(), fixture.fileId(),
+                UUID.fromString(objectMapper.readTree(result).path("data").path("extractionId").asString()));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions startOcr(OcrFixture fixture, UUID key) throws Exception {
+        return mockMvc.perform(post(ocrPath(fixture)).header("Idempotency-Key", key)
+                .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"externalOcrAccepted\":true}"));
+    }
+
+    private String ocrPath(OcrFixture fixture) {
+        return "/api/v1/cases/" + fixture.caseId() + "/files/" + fixture.fileId() + "/ocr";
+    }
+
+    private org.springframework.test.web.servlet.ResultActions ocrView(OcrFixture fixture) throws Exception {
+        return mockMvc.perform(get(ocrPath(fixture))
+                .header("Authorization", "Bearer " + fixture.owner().accessToken()));
+    }
+
+    private UUID saveOcr(OcrFixture fixture, int version, String text) throws Exception {
+        String response = mockMvc.perform(post(ocrPath(fixture) + "-revisions")
+                        .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                                java.util.Map.of("extractionId", fixture.extractionId(),
+                                        "expectedRevision", version, "correctedText", text))))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        return UUID.fromString(objectMapper.readTree(response).path("data").path("id").asString());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions confirmOcr(OcrFixture fixture, UUID revision) throws Exception {
+        return mockMvc.perform(post("/api/v1/cases/{caseId}/files/{fileId}/confirm", fixture.caseId(), fixture.fileId())
+                .header("Authorization", "Bearer " + fixture.owner().accessToken())
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(
+                        java.util.Map.of("revisionId", revision, "sensitiveDataReviewed", true))));
     }
 
     private static KeyPair generateRsaKeyPair() {

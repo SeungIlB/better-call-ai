@@ -7,24 +7,27 @@ spring:
       max-request-size: 21MB
       file-size-threshold: 0
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/legal_ai}
     username: ${DATABASE_APP_USER:legal_ai_app}
     password: ${DATABASE_APP_PASSWORD}
     hikari:
       maximum-pool-size: ${DATABASE_POOL_SIZE:10}
       connection-init-sql: SET TIME ZONE 'UTC'
   auth-datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/legal_ai}
     username: ${DATABASE_AUTH_USER:legal_ai_auth}
     password: ${DATABASE_AUTH_PASSWORD}
     hikari:
       maximum-pool-size: ${DATABASE_AUTH_POOL_SIZE:5}
       connection-init-sql: SET TIME ZONE 'UTC'
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
   flyway:
     enabled: true
     clean-disabled: true
     validate-on-migrate: true
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/legal_ai}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/legal_ai}
     user: ${DATABASE_MIGRATION_USER:legal_ai_migrator}
     password: ${DATABASE_MIGRATION_PASSWORD}
   security:
@@ -34,7 +37,10 @@ spring:
           issuer-uri: ${JWT_ISSUER:http://localhost:8080}
 
 server:
+  port: ${PORT:${SERVER_PORT:8080}}
   shutdown: graceful
+  tomcat:
+    basedir: ${SERVER_TOMCAT_BASEDIR:build/tomcat}
   error:
     include-message: never
     include-binding-errors: never
@@ -42,6 +48,9 @@ server:
     include-stacktrace: never
 
 management:
+  health:
+    redis:
+      enabled: false
   endpoints:
     web:
       exposure:
@@ -71,6 +80,20 @@ security:
     lookup-key-base64: ${IDENTITY_LOOKUP_KEY_BASE64:}
 
 integrations:
+  toss:
+    secret-key: ${TOSS_SECRET_KEY:}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    chat-model: ${OPENAI_CHAT_MODEL:}
+    chat-reasoning-effort: ${OPENAI_CHAT_REASONING_EFFORT:}
+    chat-max-output-tokens: ${OPENAI_CHAT_MAX_OUTPUT_TOKENS:1200}
+    ocr-model: ${OPENAI_OCR_MODEL:${OPENAI_CHAT_MODEL:}}
+    ocr-reasoning-effort: ${OPENAI_OCR_REASONING_EFFORT:}
+    ocr-timeout: ${OPENAI_OCR_TIMEOUT_SECONDS:90}s
+  clamav:
+    host: ${CLAMAV_HOST:127.0.0.1}
+    port: ${CLAMAV_PORT:3310}
+    timeout-ms: ${CLAMAV_TIMEOUT_MS:10000}
   law-open-data:
     base-url: ${LAW_OPEN_DATA_BASE_URL:https://www.law.go.kr/DRF}
     oc: ${LAW_OPEN_DATA_OC:}

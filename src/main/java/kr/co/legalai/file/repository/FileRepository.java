@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.List;
 
 @Repository
 @RequiredArgsConstructor
@@ -46,6 +47,11 @@ public class FileRepository {
                 (row, index) -> row.getObject(1, UUID.class), caseId).isEmpty();
     }
 
+    public boolean caseExists(UUID caseId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM casework.cases WHERE id = ?)", Boolean.class, caseId));
+    }
+
     public boolean withinCaseLimit(UUID caseId, long addedBytes, UploadPolicy policy) {
         return Boolean.TRUE.equals(jdbc.queryForObject("""
                 SELECT count(*) < ? AND COALESCE(sum(size_bytes), 0) + ? <= ?
@@ -61,6 +67,13 @@ public class FileRepository {
                         clock_timestamp() + make_interval(hours => ?))
                 """, stored.id(), caseId, userId, mime.equals("application/pdf") ? "document" : "image",
                 name, mime, stored.sizeBytes(), stored.id() + ".upload", stored.sha256(), pages, hours);
+    }
+
+    public void markClean(UUID fileId) {
+        jdbc.update("""
+                UPDATE casework.files SET malware_status = 'clean', malware_scan_provider = 'clamav',
+                    malware_scanned_at = clock_timestamp() WHERE id = ?
+                """, fileId);
     }
 
     public Optional<FileResponse> find(UUID caseId, UUID fileId) {
@@ -90,5 +103,36 @@ public class FileRepository {
                 VALUES ('FILE_UPLOADED', 'file', ?, jsonb_build_object('caseId', ?::text, 'fileId', ?::text),
                         ?, now() + interval '30 days')
                 """, fileId, caseId, fileId, "file-uploaded:" + fileId);
+    }
+
+    public List<FileResponse> list(UUID caseId, int page, int size) {
+        return jdbc.query("""
+                SELECT id,case_id,original_name,mime_type,size_bytes,page_count,lifecycle_status,
+                    malware_status,purge_status,created_at,storage_expires_at
+                FROM casework.files WHERE case_id=? AND removed_at IS NULL
+                ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?
+                """, (row, index) -> FileResponse.builder().id(row.getObject("id", UUID.class)).caseId(row.getObject("case_id", UUID.class))
+                .originalName(row.getString("original_name")).mimeType(row.getString("mime_type")).sizeBytes(row.getLong("size_bytes"))
+                .pageCount(row.getObject("page_count", Integer.class)).lifecycleStatus(row.getString("lifecycle_status"))
+                .malwareStatus(row.getString("malware_status")).purgeStatus(row.getString("purge_status"))
+                .createdAt(row.getTimestamp("created_at").toInstant()).storageExpiresAt(row.getTimestamp("storage_expires_at").toInstant())
+                .build(), caseId, size + 1, (long) (page - 1) * size);
+    }
+
+    public Optional<Integer> remove(UUID caseId, UUID fileId) {
+        return jdbc.query("""
+                WITH removed AS (
+                    UPDATE casework.files
+                    SET removed_at = clock_timestamp(), storage_expires_at = clock_timestamp(),
+                        lifecycle_status = CASE WHEN storage_bucket IS NULL THEN 'PURGED' ELSE 'PURGE_PENDING' END,
+                        purged_at = CASE WHEN storage_bucket IS NULL THEN COALESCE(purged_at, clock_timestamp()) ELSE purged_at END
+                    WHERE id = ? AND case_id = ? AND removed_at IS NULL
+                    RETURNING case_id
+                )
+                UPDATE casework.cases c
+                SET version_no = c.version_no + 1, confirmed_at = NULL, updated_at = clock_timestamp()
+                WHERE c.id = ? AND EXISTS (SELECT 1 FROM removed)
+                RETURNING c.version_no
+                """, (row, index) -> row.getInt(1), fileId, caseId, caseId).stream().findFirst();
     }
 }

@@ -1,0 +1,66 @@
+package kr.co.legalai.legaldata.service.impl;
+
+import kr.co.legalai.common.exception.BusinessException;
+import kr.co.legalai.common.exception.ErrorCode;
+import kr.co.legalai.common.response.PageResponse;
+import kr.co.legalai.common.security.AuthenticatedUser;
+import kr.co.legalai.common.transaction.UserScopedTransaction;
+import kr.co.legalai.legaldata.dto.response.LegalEvidenceResponse;
+import kr.co.legalai.legaldata.repository.EmbeddingRepository;
+import kr.co.legalai.legaldata.repository.LegalEvidenceSearchRepository;
+import kr.co.legalai.legaldata.service.LegalEvidenceSearchService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.concurrent.Semaphore;
+
+@Service
+@RequiredArgsConstructor
+public class LegalEvidenceSearchServiceImpl implements LegalEvidenceSearchService {
+    private final AuthenticatedUser user;
+    private final UserScopedTransaction transactions;
+    private final EmbeddingRepository embeddings;
+    private final LegalEvidenceSearchRepository repository;
+    private final Semaphore slots = new Semaphore(2);
+
+    @Override
+    public PageResponse<LegalEvidenceResponse> search(String query) {
+        return search(query, "housing_lease");
+    }
+
+    @Override
+    public PageResponse<LegalEvidenceResponse> search(String query, String disputeDomain) {
+        if (query == null || query.isBlank() || query.length() > 1000) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        }
+        user.getUserId();
+        embeddings.requireConfigured();
+        if (!slots.tryAcquire()) throw new BusinessException(ErrorCode.LEGAL_SEARCH_BUSY);
+        try {
+            // 외부 호출 중 DB 트랜잭션·연결을 점유하지 않는다.
+            String searchQuery = switch (disputeDomain) {
+                case "housing_lease" -> HousingSearchTerms.expand(query);
+                case "vehicle_accident" -> VehicleSearchTerms.expand(query);
+                case "assault" -> AssaultSearchTerms.expand(query);
+                case "labor" -> LaborSearchTerms.expand(query);
+                case "consumer" -> ConsumerSearchTerms.expand(query);
+                case "family" -> FamilySearchTerms.expand(query);
+                case "inheritance" -> InheritanceSearchTerms.expand(query);
+                case "defamation" -> DefamationSearchTerms.expand(query);
+                case "personal_injury" -> PersonalInjurySearchTerms.expand(query);
+                case "commercial" -> CommercialSearchTerms.expand(query);
+                default -> query.strip();
+            };
+            float[] vector = embeddings.embed(List.of(searchQuery)).getFirst();
+            var matches = transactions.execute(id -> "housing_lease".equals(disputeDomain)
+                    ? repository.search(searchQuery, vector) : repository.search(searchQuery, vector, disputeDomain));
+            return new PageResponse<>(matches, 1, 8, false);
+        } catch (RuntimeException failure) {
+            // JDBC 오류에도 검색어가 포함될 수 있으므로 원문·cause를 전역 로그로 전달하지 않는다.
+            throw new BusinessException(ErrorCode.LEGAL_SEARCH_FAILED);
+        } finally {
+            slots.release();
+        }
+    }
+}
