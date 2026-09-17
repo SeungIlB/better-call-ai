@@ -112,19 +112,19 @@ async function openFile(id) {
 }
 async function renderAnalyses() {
   const form = document.querySelector('#analysis-form');
-  if (form) analysisInput = {query:form.elements.query.value,fileIds:[...form.elements.fileIds.selectedOptions].map(option => option.value),excerptStart:Number(form.elements.excerptStart.value)};
+  if (form) analysisInput = {query:form.elements.query.value,fileIds:[...form.elements.fileIds.selectedOptions].map(option => option.value),excerptStart:0};
   const [list, confirmed] = await Promise.all([api(casePath(`/analyses?page=${analysisPage}&pageSize=10`)), api(casePath('/confirmed-evidence?pageSize=100'))]);
   analyses = list.items; evidence = confirmed.evidence.items;
   if (selectedAnalysis) selectedAnalysis = await api(casePath(`/analyses/${selectedAnalysis.id}`));
   else selectedAnalysis = analyses.find(a => a.status === 'succeeded' && !a.stale) || analyses[0] || null;
   const selectedIds = analysisInput?.fileIds?.length ? analysisInput.fileIds : [analysisInput?.fileId || pendingAnalysis?.body?.fileId || evidence[0]?.fileId].filter(Boolean);
-  document.querySelector('#workspace').innerHTML = `<div class="workspace-grid"><section class="panel"><h2>어떤 점을 확인하고 싶나요?</h2><p>확정한 자료를 최대 5개까지 함께 비교해 볼 수 있어요.</p>${evidence.length ? `<form id="analysis-form" class="stack"><label class="field">확정 자료 (여러 개 선택 가능)<select name="fileIds" id="evidence-select" multiple size="4">${evidence.map((e,i) => `<option value="${esc(e.fileId)}" ${selectedIds.includes(e.fileId) ? 'selected' : ''}>확정 자료 ${i+1} · ${date(e.confirmedAt)}</option>`).join('')}</select></label><small>Ctrl 또는 ⌘를 누른 채 자료를 선택해 주세요. 최대 5개까지 사용할 수 있어요.</small>${area('확인할 질문','query',analysisInput?.query || pendingAnalysis?.body.query || '이 자료에서 수선 비용을 확인하려면 어떤 근거와 추가 정보가 필요한가요?','required maxlength="300"')}${field('발췌 시작 위치 (글자 기준)','excerptStart',analysisInput?.excerptStart || 0,'id="excerpt-start" type="number" min="0" required')}<details open><summary>분석에 사용할 발췌문</summary><p id="excerpt-preview" class="quote"></p></details><label class="check"><input name="review" type="checkbox" required>선택한 발췌와 질문이 제가 확인하려는 내용이에요.</label><button>${pendingAnalysis ? '같은 요청의 결과 확인' : '이 내용으로 분석하기'}</button></form>` : '<div class="empty"><p>먼저 자료의 OCR 수정본을 확정해 주세요.</p><button data-act="tab" data-id="files">자료 확인하기</button></div>'}</section><section class="panel"><div class="row"><h2>분석 이력</h2><button class="ghost" data-act="refresh-analysis">새로고침</button></div>${analyses.map(a => `<div class="history-item"><div><strong>${a.version}차 검토</strong><small>${date(a.createdAt)} · ${a.stale ? '최신 아님' : a.status === 'running' ? '분석 중' : a.status === 'failed' ? '실패' : '검토 필요'}</small></div><button class="secondary" data-act="analysis" data-id="${esc(a.id)}">보기</button></div>`).join('') || '<p>아직 분석 이력이 없어요.</p>'}${pager('analyses',analysisPage,list.hasNext)}</section></div><div id="analysis-result"></div>`;
+  document.querySelector('#workspace').innerHTML = `<div class="workspace-grid"><section class="panel"><h2>어떤 점을 확인하고 싶나요?</h2><p>확정한 자료를 최대 5개까지 함께 비교해 볼 수 있어요.</p>${evidence.length ? `<form id="analysis-form" class="stack"><label class="field">확정 자료 (여러 개 선택 가능)<select name="fileIds" id="evidence-select" multiple size="4">${evidence.map((e,i) => `<option value="${esc(e.fileId)}" ${selectedIds.includes(e.fileId) ? 'selected' : ''}>확정 자료 ${i+1} · ${date(e.confirmedAt)}</option>`).join('')}</select></label><small>Ctrl 또는 ⌘를 누른 채 자료를 선택해 주세요. 최대 5개까지 사용할 수 있어요.</small>${area('확인할 질문','query',analysisInput?.query || pendingAnalysis?.body.query || '이 자료에서 수선 비용을 확인하려면 어떤 근거와 추가 정보가 필요한가요?','required maxlength="300"')}<details open><summary>분석에 사용할 발췌문</summary><p id="excerpt-preview" class="quote"></p></details><label class="check"><input name="review" type="checkbox" required>선택한 자료와 질문이 제가 확인하려는 내용이에요.</label><button>${pendingAnalysis ? '같은 요청의 결과 확인' : '이 내용으로 분석하기'}</button></form>` : '<div class="empty"><p>먼저 자료의 OCR 수정본을 확정해 주세요.</p><button data-act="tab" data-id="files">자료 확인하기</button></div>'}</section><section class="panel"><div class="row"><h2>분석 이력</h2><button class="ghost" data-act="refresh-analysis">새로고침</button></div>${analyses.map(a => `<div class="history-item"><div><strong>${a.version}차 검토</strong><small>${date(a.createdAt)} · ${a.stale ? '최신 아님' : a.status === 'running' ? '분석 중' : a.status === 'failed' ? '실패' : '검토 필요'}</small></div><button class="secondary" data-act="analysis" data-id="${esc(a.id)}">보기</button></div>`).join('') || '<p>아직 분석 이력이 없어요.</p>'}${pager('analyses',analysisPage,list.hasNext)}</section></div><div id="analysis-result"></div>`;
   updateExcerpt(); renderResult();
 }
 function updateExcerpt() {
   const form = document.querySelector('#analysis-form'); if (!form) return;
   const ids = [...form.elements.fileIds.selectedOptions].map(option => option.value);
-  const start = Number(form.elements.excerptStart.value);
+  const start = 0;
   const parts = ids.map((id, index) => { const full = evidence.find(e => e.fileId === id)?.correctedText || ''; const part = excerpt(full, start); return part ? `[자료 ${index + 1}] ${part.start}–${part.end} / 전체 ${full.length}자${part.partial ? ' · 일부 발췌' : ''}\n\n${part.text}` : ''; }).filter(Boolean);
   document.querySelector('#excerpt-preview').textContent = parts.length ? parts.join('\n\n') : '자료를 하나 이상 선택하고 시작 위치를 확인해 주세요.';
 }
@@ -179,7 +179,7 @@ app.addEventListener('submit', event => {
     if (form.id === 'analysis-form') {
       const fileIds = [...form.elements.fileIds.selectedOptions].map(option => option.value);
       if (!fileIds.length || fileIds.length > 5) throw new Error('분석에 사용할 자료를 1~5개 선택해 주세요.');
-      const body = {fileId:fileIds[0],fileIds,query:data.query,expectedCaseVersion:current.version,excerptStart:Number(data.excerptStart)};
+      const body = {fileId:fileIds[0],fileIds,query:data.query,expectedCaseVersion:current.version,excerptStart:0};
       analysisInput = body;
       if (fileIds.some(id => !excerpt(evidence.find(e => e.fileId === id)?.correctedText || '',body.excerptStart))) throw new Error('발췌 시작 위치를 확인해 주세요.');
       if (JSON.stringify(pendingAnalysis?.body) !== JSON.stringify(body)) pendingAnalysis = {body,key:crypto.randomUUID()};
