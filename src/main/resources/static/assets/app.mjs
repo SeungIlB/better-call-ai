@@ -176,7 +176,7 @@ app.addEventListener('submit', event => {
       me = await api('/auth/me'); await home();
     }
     if (form.id === 'case-form') { const value = await api('/cases',{method:'POST',body:data}); await openCase(value.id); toast('새 사건을 만들었어요.'); }
-    if (form.id === 'statement-form') { current = await api(casePath(''),{method:'PATCH',body:{originalStatement:data.originalStatement,userPartyRole:data.userPartyRole,userGoal:data.userGoal,disputeDomain:data.disputeDomain,expectedVersion:current.version}}); selectedAnalysis = null; await workspace(); toast('수정 내용을 저장했어요. 이전 분석은 최신 아님으로 표시돼요.'); }
+    if (form.id === 'statement-form') { current = await api(casePath(''),{method:'PATCH',body:{originalStatement:data.originalStatement,userPartyRole:data.userPartyRole,userGoal:data.userGoal,disputeDomain:data.disputeDomain,expectedVersion:current.version}}); selectedAnalysis = null; analysisInput = null; pendingAnalysis = null; await workspace(); toast('수정 내용을 저장했어요. 이전 분석은 최신 아님으로 표시돼요.'); }
     if (form.id === 'upload-form') {
       const file = form.elements.file.files[0]; if (!file || file.size > 20*1024*1024) throw new Error('20MB 이하의 파일을 선택해 주세요.');
       const signature = `${current.id}:${file.name}:${file.size}:${file.lastModified}`;
