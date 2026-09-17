@@ -24,7 +24,9 @@ class GroundedAnswerRepositoryTest {
     private static final String VALID = """
             {"summary":"수선 비용을 지출했다는 진술입니다.",
              "findings":[{"sourceId":1,"quote":"수선 비용 관련 내용","explanation":"비용 부담 약정을 확인해야 합니다."}],
-             "questions":["수선 전 통지했나요?"]}
+             "questions":["수선 전 통지했나요?"],
+             "actionDraft":["수선 비용과 확인이 필요한 내용을 정리해 전달해 주세요."],
+             "checklist":["수선 전 통지 자료를 보관해 주세요."]}
             """;
 
     private GroundedAnswerRepository.Draft generate(String output) {
@@ -74,7 +76,7 @@ class GroundedAnswerRepositoryTest {
     }
 
     @Test void permitsInsufficientEvidenceWithoutInventedFindings() {
-        var result = generate("{\"summary\":\"관련 근거를 확인할 수 없습니다.\",\"findings\":[],\"questions\":[]}");
+        var result = generate("{\"summary\":\"관련 근거를 확인할 수 없습니다.\",\"findings\":[],\"questions\":[],\"actionDraft\":[],\"checklist\":[]}");
         assertTrue(result.findings().isEmpty());
     }
 }

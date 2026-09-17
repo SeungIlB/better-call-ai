@@ -60,7 +60,7 @@ public class LegalDraftServiceImpl implements LegalDraftService {
                     .start(0).end(combinedText.length()).totalLength(combinedText.length()).partial(false).build();
             var draft = sources.isEmpty()
                     ? new GroundedAnswerRepository.Draft("검색된 법률 근거가 없어 안내 초안을 만들지 못했습니다.",
-                            List.of(), List.of("분쟁 상황이나 다른 확정 문서 발췌를 확인해 주세요."))
+                            List.of(), List.of("분쟁 상황이나 다른 확정 문서 발췌를 확인해 주세요."), List.of(), List.of())
                     : "vehicle_accident".equals(first.disputeDomain())
                     ? generator.generate("vehicle_accident", request.query(), combinedEvidence, sources.stream().distinct().toList())
                     : "assault".equals(first.disputeDomain())
@@ -83,7 +83,8 @@ public class LegalDraftServiceImpl implements LegalDraftService {
             });
             return LegalDraftResponse.builder().caseId(caseId).caseVersion(first.caseVersion()).evidence(combinedEvidence)
                     .status(draft.findings().isEmpty() ? "INSUFFICIENT_EVIDENCE" : "NEEDS_REVIEW")
-                    .summary(draft.summary()).findings(draft.findings()).questions(draft.questions()).conflicts(conflicts)
+                    .summary(draft.summary()).findings(draft.findings()).questions(draft.questions())
+                    .actionDraft(draft.actionDraft()).checklist(draft.checklist()).conflicts(conflicts)
                     .notice("발췌문과 검색된 현행 법령에 근거한 검토용 초안입니다. 사건 당시 법령과 사실관계 확인이 필요합니다.").build();
         } catch (DataAccessException | TransactionException failure) {
             throw new BusinessException(ErrorCode.LEGAL_ANSWER_FAILED);

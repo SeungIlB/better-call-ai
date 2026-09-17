@@ -37,6 +37,8 @@ public class GroundedAnswerRepository {
             미확인 약정·통지·지출은 없었다는 뜻이 아니다. 그 존재나 부존재를 전제로 설명하지 않는다.
             관련 근거가 없거나 판단에 필요한 부분이 발췌에서 빠졌으면 findings를 빈 배열로 반환한다.
             questions에는 추가로 확인할 사실을 최대 3개 질문한다. 이미 제공한 정보를 반복해서 묻지 않는다.
+            actionDraft에는 사용자가 상대방에게 보낼 수 있는 사실 중심의 문장을 최대 5개 작성한다. 확인되지 않은 책임·법적 결론·기한을 단정하지 않는다.
+            checklist에는 지금 확인하거나 준비할 행동을 최대 5개 작성한다. 소송·지급 중단 등 돌이키기 어려운 행동을 확정적으로 지시하지 않는다.
             보증금 반환 가능성·승소율·책임 비율·법적 기한을 단정하지 않고 지급 중단·해지·소송을 확정적으로 권하지 않는다.
             과거 사건에 현행 조문이 그대로 적용된다고 가정하지 않는다. 판례나 읽지 않은 문서를 참고했다고 말하지 않는다.
             referenceDate는 서버의 한국 날짜이며 사건 발생일이 아니다. 현재·장래 비교는 이 날짜만 기준으로 한다.
@@ -94,17 +96,20 @@ public class GroundedAnswerRepository {
                 "required", List.of("sourceId", "quote", "explanation"),
                 "properties", Map.of("sourceId", Map.of("type", "integer"), "quote", string, "explanation", string));
         return Map.of("type", "object", "additionalProperties", false,
-                "required", List.of("summary", "findings", "questions"),
+                "required", List.of("summary", "findings", "questions", "actionDraft", "checklist"),
                 "properties", Map.of("summary", string, "findings", Map.of("type", "array", "items", finding),
-                        "questions", Map.of("type", "array", "items", string)));
+                        "questions", Map.of("type", "array", "items", string),
+                        "actionDraft", Map.of("type", "array", "items", string),
+                        "checklist", Map.of("type", "array", "items", string)));
     }
 
     private Draft parse(String text, List<LegalEvidenceResponse> sources) {
         JsonNode root = mapper.readTree(text);
-        if (!root.isObject() || root.size() != 3) throw invalid();
+        if (!root.isObject() || root.size() != 5) throw invalid();
         String summary = generatedText(root.path("summary"), 600);
-        JsonNode items = root.path("findings"), questions = root.path("questions");
-        if (!items.isArray() || items.size() > 3 || !questions.isArray() || questions.size() > 3) throw invalid();
+        JsonNode items = root.path("findings"), questions = root.path("questions"), actionDraft = root.path("actionDraft"), checklist = root.path("checklist");
+        if (!items.isArray() || items.size() > 3 || !questions.isArray() || questions.size() > 3
+                || !actionDraft.isArray() || actionDraft.size() > 5 || !checklist.isArray() || checklist.size() > 5) throw invalid();
         var findings = new ArrayList<GroundedFindingResponse>();
         for (var item : items) {
             var id = item.path("sourceId");
@@ -118,7 +123,17 @@ public class GroundedAnswerRepository {
         }
         var missing = new ArrayList<String>();
         for (var question : questions) missing.add(generatedText(question, 200));
-        return new Draft(summary, List.copyOf(findings), List.copyOf(missing));
+        var actions = textArray(actionDraft, 500);
+        var checklistItems = textArray(checklist, 300);
+        if (actions.stream().anyMatch(item -> item.isBlank() || item.length() > 500)
+                || checklistItems.stream().anyMatch(item -> item.isBlank() || item.length() > 300)) throw invalid();
+        return new Draft(summary, List.copyOf(findings), List.copyOf(missing), List.copyOf(actions), List.copyOf(checklistItems));
+    }
+
+    private List<String> textArray(JsonNode array, int limit) {
+        var values = new ArrayList<String>();
+        for (var item : array) values.add(generatedText(item, limit));
+        return values;
     }
 
     private String generatedText(JsonNode node, int limit) {
@@ -133,5 +148,6 @@ public class GroundedAnswerRepository {
     }
 
     private BusinessException invalid() { return new BusinessException(ErrorCode.LEGAL_ANSWER_FAILED); }
-    public record Draft(String summary, List<GroundedFindingResponse> findings, List<String> questions) { }
+    public record Draft(String summary, List<GroundedFindingResponse> findings, List<String> questions,
+                        List<String> actionDraft, List<String> checklist) { }
 }
