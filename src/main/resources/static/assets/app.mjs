@@ -16,6 +16,19 @@ const domainExamples = {
   vehicle_accident: {title:'예: 교차로 차량 충돌 사고', statement:'사고 일시·장소, 차량 움직임, 파손·부상과 확인되지 않은 내용을 적어 주세요.', goal:'예: 사고 자료를 정리하고 보험사에 확인할 내용을 알고 싶어요.'},
   assault: {title:'예: 말다툼 중 신체 접촉', statement:'발생 일시·장소, 각자의 행동, 부상·목격자와 확인되지 않은 내용을 적어 주세요.', goal:'예: 보유 자료를 정리하고 추가로 확인할 내용을 알고 싶어요.'}
 };
+const analysisQuestions = {
+  housing_lease:'이 자료에서 수선·비용 부담과 관련해 어떤 근거와 추가 정보가 필요한가요?',
+  vehicle_accident:'이 자료에서 사고 경위·손해·부상과 관련해 어떤 사실과 추가 자료를 확인해야 하나요?',
+  assault:'이 자료에서 신체 접촉·부상·현장 상황과 관련해 어떤 사실과 추가 자료를 확인해야 하나요?',
+  labor:'이 자료에서 근로 관계·임금·근무 사실과 관련해 어떤 사실과 추가 자료를 확인해야 하나요?',
+  consumer:'이 자료에서 상품·서비스 이용과 피해·환불 요청과 관련해 어떤 사실과 추가 자료를 확인해야 하나요?',
+  commercial:'이 자료에서 거래 내용·이행·손해와 관련해 어떤 사실과 추가 자료를 확인해야 하나요?',
+  family:'이 자료에서 가족 관계와 사실관계·협의 내용을 확인하려면 어떤 자료가 더 필요한가요?',
+  inheritance:'이 자료에서 상속 관계·재산·의사와 관련해 어떤 사실과 추가 자료를 확인해야 하나요?',
+  defamation:'이 자료에서 발언·게시 내용과 전파·피해 사실을 확인하려면 어떤 자료가 더 필요한가요?',
+  personal_injury:'이 자료에서 사고 경위·부상·치료와 관련해 어떤 사실과 추가 자료를 확인해야 하나요?'
+};
+function defaultAnalysisQuestion(domain) { return analysisQuestions[domain] || analysisQuestions.housing_lease; }
 function toast(message, error = false) {
   const node = document.querySelector('#notice'); clearTimeout(toastTimer);
   node.textContent = message; node.className = `toast${error ? ' error' : ''}`; node.hidden = false;
@@ -118,7 +131,7 @@ async function renderAnalyses() {
   if (selectedAnalysis) selectedAnalysis = await api(casePath(`/analyses/${selectedAnalysis.id}`));
   else selectedAnalysis = analyses.find(a => a.status === 'succeeded' && !a.stale) || analyses[0] || null;
   const selectedIds = analysisInput?.fileIds?.length ? analysisInput.fileIds : [analysisInput?.fileId || pendingAnalysis?.body?.fileId || evidence[0]?.fileId].filter(Boolean);
-  document.querySelector('#workspace').innerHTML = `<div class="workspace-grid"><section class="panel"><h2>어떤 점을 확인하고 싶나요?</h2><p>확정한 자료를 최대 5개까지 함께 비교해 볼 수 있어요.</p>${evidence.length ? `<form id="analysis-form" class="stack"><label class="field">확정 자료 (여러 개 선택 가능)<select name="fileIds" id="evidence-select" multiple size="4">${evidence.map((e,i) => `<option value="${esc(e.fileId)}" ${selectedIds.includes(e.fileId) ? 'selected' : ''}>확정 자료 ${i+1} · ${date(e.confirmedAt)}</option>`).join('')}</select></label><small>Ctrl 또는 ⌘를 누른 채 자료를 선택해 주세요. 최대 5개까지 사용할 수 있어요.</small>${area('확인할 질문','query',analysisInput?.query || pendingAnalysis?.body.query || '이 자료에서 수선 비용을 확인하려면 어떤 근거와 추가 정보가 필요한가요?','required maxlength="300"')}<details open><summary>분석에 사용할 발췌문</summary><p id="excerpt-preview" class="quote"></p></details><label class="check"><input name="review" type="checkbox" required>선택한 자료와 질문이 제가 확인하려는 내용이에요.</label><button>${pendingAnalysis ? '같은 요청의 결과 확인' : '이 내용으로 분석하기'}</button></form>` : '<div class="empty"><p>먼저 자료의 OCR 수정본을 확정해 주세요.</p><button data-act="tab" data-id="files">자료 확인하기</button></div>'}</section><section class="panel"><div class="row"><h2>분석 이력</h2><button class="ghost" data-act="refresh-analysis">새로고침</button></div>${analyses.map(a => `<div class="history-item"><div><strong>${a.version}차 검토</strong><small>${date(a.createdAt)} · ${a.stale ? '최신 아님' : a.status === 'running' ? '분석 중' : a.status === 'failed' ? '실패' : '검토 필요'}</small></div><button class="secondary" data-act="analysis" data-id="${esc(a.id)}">보기</button></div>`).join('') || '<p>아직 분석 이력이 없어요.</p>'}${pager('analyses',analysisPage,list.hasNext)}</section></div><div id="analysis-result"></div>`;
+  document.querySelector('#workspace').innerHTML = `<div class="workspace-grid"><section class="panel"><h2>어떤 점을 확인하고 싶나요?</h2><p>확정한 자료를 최대 5개까지 함께 비교해 볼 수 있어요.</p>${evidence.length ? `<form id="analysis-form" class="stack"><label class="field">확정 자료 (여러 개 선택 가능)<select name="fileIds" id="evidence-select" multiple size="4">${evidence.map((e,i) => `<option value="${esc(e.fileId)}" ${selectedIds.includes(e.fileId) ? 'selected' : ''}>확정 자료 ${i+1} · ${date(e.confirmedAt)}</option>`).join('')}</select></label><small>Ctrl 또는 ⌘를 누른 채 자료를 선택해 주세요. 최대 5개까지 사용할 수 있어요.</small>${area('확인할 질문','query',analysisInput?.query || pendingAnalysis?.body.query || defaultAnalysisQuestion(current.disputeDomain),'required maxlength="300"')}<details open><summary>분석에 사용할 발췌문</summary><p id="excerpt-preview" class="quote"></p></details><label class="check"><input name="review" type="checkbox" required>선택한 자료와 질문이 제가 확인하려는 내용이에요.</label><button>${pendingAnalysis ? '같은 요청의 결과 확인' : '이 내용으로 분석하기'}</button></form>` : '<div class="empty"><p>먼저 자료의 OCR 수정본을 확정해 주세요.</p><button data-act="tab" data-id="files">자료 확인하기</button></div>'}</section><section class="panel"><div class="row"><h2>분석 이력</h2><button class="ghost" data-act="refresh-analysis">새로고침</button></div>${analyses.map(a => `<div class="history-item"><div><strong>${a.version}차 검토</strong><small>${date(a.createdAt)} · ${a.stale ? '최신 아님' : a.status === 'running' ? '분석 중' : a.status === 'failed' ? '실패' : '검토 필요'}</small></div><button class="secondary" data-act="analysis" data-id="${esc(a.id)}">보기</button></div>`).join('') || '<p>아직 분석 이력이 없어요.</p>'}${pager('analyses',analysisPage,list.hasNext)}</section></div><div id="analysis-result"></div>`;
   updateExcerpt(); renderResult();
 }
 function updateExcerpt() {
