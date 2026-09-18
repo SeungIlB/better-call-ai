@@ -2,8 +2,7 @@
 
 2026-09-19 변경: 파일 업로드에서 ClamAV 의존성과 검사 상태 필드를 제거했다. 이전 ClamAV 검증 내용은 당시 구성의 이력이며 현재 동작을 뜻하지 않는다. 현재 업로드는 파일 형식·크기·페이지를 검증하지만 바이러스 검사는 수행하지 않는다.
 
-- 검증: Java 21에서 본문·테스트 코드 컴파일 성공, `FileValidationTest` 5건 통과, `docker compose config --quiet` 및 `git diff --check` 통과.
-- 전체 테스트: 81건 중 80건 완료, `CaseFlowIntegrationTest`는 로컬 Docker 데몬이 없어 Testcontainers 초기화 전에 중단됐다. DB 마이그레이션과 업로드 통합 경로는 Docker가 있는 환경에서 재검증해야 한다.
+- 검증: Java 21에서 `./gradlew.bat test` 160건 전부 통과(실패·건너뜀 없음). Testcontainers의 PostgreSQL에서 V026 마이그레이션과 업로드·OCR 통합 흐름을 확인했다. `FileValidationTest` 5건, `docker compose config --quiet`, `git diff --check`도 통과했다.
 
 2026-09-10 사용자 요청: 매 단계 구현·검증·문서화 후 로컬 커밋. **원격 push 금지.** 별도 “다음” 요청 없이 백엔드 핵심 흐름과 프론트 연결까지 진행한다.
 
