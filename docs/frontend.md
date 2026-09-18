@@ -4,7 +4,7 @@
 
 프론트는 Spring의 `src/main/resources/static`에서 제공하는 HTML·CSS·ES module이다. 별도 프론트 빌드·런타임 라이브러리나 CORS 설정 없이 같은 서버 API를 사용한다. 서버 환경 변수를 설정하고 `./gradlew.bat bootRun` 후 `http://localhost:8080/`을 연다. `.env`를 현재 프로세스에만 읽는 편의 명령은 `./scripts/run-local.ps1`이다. 파일에 있는 값이나 토큰을 출력하지 않는다.
 
-외부 OCR에는 `OPENAI_API_KEY`, `OPENAI_OCR_MODEL`이 필요하고 분석·채팅에는 `OPENAI_CHAT_MODEL`도 명시해야 한다. 모델 미설정·ClamAV 불가·잘못된 파일은 서버 오류를 그대로 안내하며 모의 성공으로 바꾸지 않는다. Spring은 `.env`를 자동으로 읽지 않는다. PostgreSQL·ClamAV 실행 및 비밀 설정 방법은 README를 따른다.
+외부 OCR에는 `OPENAI_API_KEY`, `OPENAI_OCR_MODEL`이 필요하고 분석·채팅에는 `OPENAI_CHAT_MODEL`도 명시해야 한다. 모델 미설정·잘못된 파일은 서버 오류를 그대로 안내하며 모의 성공으로 바꾸지 않는다. Spring은 `.env`를 자동으로 읽지 않는다. PostgreSQL 실행 및 비밀 설정 방법은 README를 따른다.
 
 ## 제공 화면
 

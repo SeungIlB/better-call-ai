@@ -31,7 +31,6 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import kr.co.legalai.file.service.FileCleanupService;
 import kr.co.legalai.file.repository.FileCleanupRepository;
-import kr.co.legalai.file.repository.ClamAvRepository;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
@@ -300,8 +299,6 @@ class CaseFlowIntegrationTest {
     private kr.co.legalai.chat.repository.OpenAiChatRepository openAiChat;
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private kr.co.legalai.chat.repository.ChatRepository chatRepository;
-    @MockitoBean
-    private ClamAvRepository malwareScanner;
     private static final UUID USER_A = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID USER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final KeyPair JWT_KEY_PAIR = generateRsaKeyPair();
@@ -1445,65 +1442,6 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
-    void malwareRejectionAndScannerOutageRollbackOriginalAndDatabase() throws Exception {
-        var owner = registerTestUser();
-        UUID caseId = createHttpCase(owner, tokenUserId(owner));
-        long before;
-        try (var files = Files.list(uploadRoot)) {
-            before = files.count();
-        }
-        for (var code : List.of(ErrorCode.UNSAFE_FILE, ErrorCode.MALWARE_SCAN_UNAVAILABLE)) {
-            org.mockito.Mockito.doThrow(new BusinessException(code))
-                    .when(malwareScanner).assertClean(org.mockito.ArgumentMatchers.any(Path.class));
-            mockMvc.perform(multipart("/api/v1/cases/{caseId}/files", caseId)
-                        .header("Idempotency-Key", UUID.randomUUID().toString())
-                            .file(new MockMultipartFile("file", "증거.png", "image/png", testPng()))
-                            .header("Authorization", "Bearer " + owner.accessToken()))
-                    .andExpect(status().is(code.status().value()))
-                    .andExpect(jsonPath("$.code").value(code.code()));
-        }
-        try (var files = Files.list(uploadRoot)) {
-            assertEquals(before, files.count());
-        }
-        try (var connection = adminConnection();
-             var statement = connection.prepareStatement("""
-                     SELECT (SELECT count(*) FROM casework.files WHERE case_id = ?),
-                         (SELECT count(*) FROM ops.outbox_events WHERE event_type = 'FILE_UPLOADED'
-                          AND payload->>'caseId' = ?)
-                     """)) {
-            statement.setObject(1, caseId);
-            statement.setString(2, caseId.toString());
-            try (var row = statement.executeQuery()) {
-                assertTrue(row.next());
-                assertEquals(0, row.getInt(1));
-                assertEquals(0, row.getInt(2));
-            }
-        }
-    }
-
-    @Test
-    void successfulScanRecordsProviderAndTimestamp() throws Exception {
-        var owner = registerTestUser();
-        UUID caseId = createHttpCase(owner, tokenUserId(owner));
-        UUID fileId = uploadTestFile(owner, caseId,
-                new MockMultipartFile("file", "증거.png", "image/png", testPng()));
-        org.mockito.Mockito.verify(malwareScanner).assertClean(uploadRoot.resolve(fileId + ".upload"));
-        try (var connection = adminConnection();
-             var statement = connection.prepareStatement("""
-                     SELECT malware_status, malware_scan_provider, malware_scanned_at
-                     FROM casework.files WHERE id = ?
-                     """)) {
-            statement.setObject(1, fileId);
-            try (var row = statement.executeQuery()) {
-                assertTrue(row.next());
-                assertEquals("clean", row.getString(1));
-                assertEquals("clamav", row.getString(2));
-                assertTrue(row.getTimestamp(3) != null);
-            }
-        }
-    }
-
-    @Test
     void freeIsLimitedToTenAndPaidHasNoDailyCountOrByteCap() throws Exception {
         UUID free = tokenUserId(registerTestUser());
         for (int i = 0; i < 10; i++) {
@@ -1573,7 +1511,7 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
-    void duplicateUploadReturnsSameFileWithoutRescanOrExtraQuota() throws Exception {
+    void duplicateUploadReturnsSameFileWithoutExtraQuota() throws Exception {
         var owner = registerTestUser();
         UUID user = tokenUserId(owner);
         UUID caseId = createHttpCase(owner, user);
@@ -1585,8 +1523,6 @@ class CaseFlowIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         String id = objectMapper.readTree(first).path("data").path("id").asString();
         assertEquals(id, objectMapper.readTree(second).path("data").path("id").asString());
-        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
-                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
         assertEquals(1, outboxCount(UUID.fromString(id)));
         assertUsageAttempts(user, 1);
         uploadWithKey(owner, caseId, key, new MockMultipartFile("file", "다른이름.png", "image/png", testPng()))
@@ -1597,20 +1533,17 @@ class CaseFlowIntegrationTest {
     }
 
     @Test
-    void failedUploadReplayDoesNotRepeatScannerOrRefundSafetyUsage() throws Exception {
+    void failedUploadReplayDoesNotRefundUsage() throws Exception {
         var owner = registerTestUser();
         UUID user = tokenUserId(owner);
         UUID caseId = createHttpCase(owner, user);
         UUID key = UUID.randomUUID();
-        var file = new MockMultipartFile("file", "증거.png", "image/png", testPng());
-        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.MALWARE_SCAN_UNAVAILABLE))
-                .when(malwareScanner).assertClean(org.mockito.ArgumentMatchers.any(Path.class));
+        var file = new MockMultipartFile("file", "증거.png", "image/png", new byte[20]);
         for (int i = 0; i < 2; i++) {
-            uploadWithKey(owner, caseId, key, file).andExpect(status().isServiceUnavailable());
+            uploadWithKey(owner, caseId, key, file).andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("FILE_002"));
         }
         assertUsageAttempts(user, 1);
-        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
-                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
     }
 
     @Test
@@ -1628,8 +1561,6 @@ class CaseFlowIntegrationTest {
         assertTrue(results.stream().allMatch(code -> code == 201 || code == 409));
         uploadWithKey(owner, caseId, key, new MockMultipartFile("file", "증거.png", "image/png", png))
                 .andExpect(status().isCreated());
-        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
-                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
         assertUsageAttempts(user, 1);
     }
 
@@ -1653,8 +1584,6 @@ class CaseFlowIntegrationTest {
         seedUploadUsage(user, 300, 300, 0);
         uploadWithKey(owner, caseId, UUID.randomUUID(), file)
                 .andExpect(status().isCreated());
-        org.mockito.Mockito.verify(malwareScanner, org.mockito.Mockito.times(1))
-                .assertClean(org.mockito.ArgumentMatchers.any(Path.class));
     }
 
     private org.springframework.test.web.servlet.ResultActions uploadWithKey(
@@ -1765,7 +1694,7 @@ class CaseFlowIntegrationTest {
                         .header("Authorization", "Bearer " + owner.accessToken()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.lifecycleStatus").value("UPLOADED"))
-                .andExpect(jsonPath("$.data.malwareStatus").value("clean"))
+                .andExpect(jsonPath("$.data.malwareStatus").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(objectMapper.readTree(response).path("data").path("id").asString());
     }

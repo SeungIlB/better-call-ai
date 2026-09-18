@@ -69,17 +69,10 @@ public class FileRepository {
                 name, mime, stored.sizeBytes(), stored.id() + ".upload", stored.sha256(), pages, hours);
     }
 
-    public void markClean(UUID fileId) {
-        jdbc.update("""
-                UPDATE casework.files SET malware_status = 'clean', malware_scan_provider = 'clamav',
-                    malware_scanned_at = clock_timestamp() WHERE id = ?
-                """, fileId);
-    }
-
     public Optional<FileResponse> find(UUID caseId, UUID fileId) {
         return jdbc.query("""
                 SELECT id, case_id, original_name, mime_type, size_bytes, page_count, lifecycle_status,
-                       malware_status, purge_status, created_at, storage_expires_at
+                       purge_status, created_at, storage_expires_at
                 FROM casework.files WHERE id = ? AND case_id = ? AND removed_at IS NULL
                 """, (row, index) -> FileResponse.builder()
                 .id(row.getObject("id", UUID.class))
@@ -89,7 +82,6 @@ public class FileRepository {
                 .sizeBytes(row.getLong("size_bytes"))
                 .pageCount(row.getObject("page_count", Integer.class))
                 .lifecycleStatus(row.getString("lifecycle_status"))
-                .malwareStatus(row.getString("malware_status"))
                 .purgeStatus(row.getString("purge_status"))
                 .createdAt(row.getTimestamp("created_at").toInstant())
                 .storageExpiresAt(row.getTimestamp("storage_expires_at").toInstant())
@@ -108,13 +100,13 @@ public class FileRepository {
     public List<FileResponse> list(UUID caseId, int page, int size) {
         return jdbc.query("""
                 SELECT id,case_id,original_name,mime_type,size_bytes,page_count,lifecycle_status,
-                    malware_status,purge_status,created_at,storage_expires_at
+                    purge_status,created_at,storage_expires_at
                 FROM casework.files WHERE case_id=? AND removed_at IS NULL
                 ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?
                 """, (row, index) -> FileResponse.builder().id(row.getObject("id", UUID.class)).caseId(row.getObject("case_id", UUID.class))
                 .originalName(row.getString("original_name")).mimeType(row.getString("mime_type")).sizeBytes(row.getLong("size_bytes"))
                 .pageCount(row.getObject("page_count", Integer.class)).lifecycleStatus(row.getString("lifecycle_status"))
-                .malwareStatus(row.getString("malware_status")).purgeStatus(row.getString("purge_status"))
+                .purgeStatus(row.getString("purge_status"))
                 .createdAt(row.getTimestamp("created_at").toInstant()).storageExpiresAt(row.getTimestamp("storage_expires_at").toInstant())
                 .build(), caseId, size + 1, (long) (page - 1) * size);
     }

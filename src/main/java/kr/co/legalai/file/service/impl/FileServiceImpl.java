@@ -9,7 +9,6 @@ import kr.co.legalai.common.exception.ErrorCode;
 import kr.co.legalai.common.transaction.UserScopedTransaction;
 import kr.co.legalai.file.dto.response.FileResponse;
 import kr.co.legalai.file.repository.FileRepository;
-import kr.co.legalai.file.repository.ClamAvRepository;
 import kr.co.legalai.file.repository.UploadRequestRepository;
 import kr.co.legalai.file.entity.UploadFingerprint;
 import kr.co.legalai.file.entity.UploadPolicy;
@@ -34,7 +33,6 @@ public class FileServiceImpl implements FileService {
     private final FileRepository repository;
     private final LocalOriginalStorage storage;
     private final FileValidator validator;
-    private final ClamAvRepository malwareScanner;
     private final UploadRequestRepository requests;
     private final FileCleanupRepository cleanup;
     private final AnalysisRepository analysisRepository;
@@ -130,13 +128,11 @@ public class FileServiceImpl implements FileService {
             if (stored.sizeBytes() != fingerprint.sizeBytes() || !stored.sha256().equals(fingerprint.sha256())) {
                 throw new BusinessException(ErrorCode.UPLOAD_KEY_CONFLICT);
             }
-            malwareScanner.assertClean(stored.path());
             int pages = validator.validateContent(stored.path(), mime, policy);
             if (!repository.withinCaseLimit(caseId, stored.sizeBytes(), policy)) {
                 throw new BusinessException(ErrorCode.FILE_CASE_LIMIT);
             }
             repository.save(caseId, userId, stored, file.getOriginalFilename(), mime, pages, policy.retentionHours());
-            repository.markClean(fileId);
             repository.recordUploadEvent(caseId, fileId);
             requests.finish(key, "COMPLETED", null);
             return repository.find(caseId, fileId).orElseThrow(() -> new BusinessException(ErrorCode.FILE_NOT_FOUND));

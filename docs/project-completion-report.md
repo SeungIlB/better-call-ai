@@ -1,6 +1,6 @@
 # Better Call AI 프로젝트 완료 리포트
 
-이 문서는 저장소 전체 구현·검증 진행을 한 곳에 누적 기록한다. 각 작업은 코드, 검증, 문서, 로컬 커밋을 함께 완료한 뒤 다음 항목으로 이동한다. 원격 push는 수행하지 않는다.
+이 문서는 저장소 전체 구현·검증 진행을 한 곳에 누적 기록한다. 각 작업은 코드, 검증, 문서, 로컬 커밋을 함께 완료한 뒤 다음 항목으로 이동한다. 원격 push는 수행하지 않는다. 과거 검증 기록의 ClamAV 언급은 당시 구성의 이력이며 현재 업로드에는 바이러스 검사가 없다.
 
 ## 현재 판정
 
@@ -8,7 +8,7 @@
 
 - Java 21/Spring Boot API, PostgreSQL, JWT 회원가입·로그인·재발급·로그아웃·인가
 - 개인 사건 생성·조회·수정·삭제와 사건 분야(`housing_lease`, `vehicle_accident`, `assault`)
-- 임시 원본 업로드, ClamAV 검사, 파일 소유권·크기·페이지 검증, 임시 원본 purge
+- 임시 원본 업로드, 파일 소유권·형식·크기·페이지 검증, 임시 원본 purge (바이러스 검사는 수행하지 않음)
 - OpenAI OCR, 사진 시각 관찰, OCR 결과 사용자 수정·확정, 확정본 중심 저장
 - 다중 확정 자료 분석과 날짜·금액 충돌 후보 표시
 - 공식 법령 수집·조문 청킹·임베딩·분야별 검색·출처 링크
@@ -169,11 +169,11 @@ MASTER 전용 `/api/v1/master/status`를 추가해 실제 DB 역할·활성 상�
 
 ## 무료 서버 배포 준비 — 완료
 
-플랫폼에 종속되지 않는 Docker 배포 절차와 필수 환경 변수, PostgreSQL·Redis·ClamAV 외부 의존성 구성을 `docs/free-server-deployment.md`에 정리했다. 배포 업체가 정해지면 해당 플랫폼의 포트·시크릿·영속 저장소 설정만 매핑해 검증한다.
+당시 플랫폼에 종속되지 않는 Docker 배포 절차와 외부 의존성 구성을 정리했다. 현재 `docs/free-server-deployment.md`에는 PostgreSQL·Redis 설정만 남아 있다. 배포 업체가 정해지면 해당 플랫폼의 포트·시크릿·영속 저장소 설정을 매핑해 검증한다.
 
 ## 배포 이미지 검증 — 완료
 
-`docker build -t better-call-ai:local .`을 실행해 Spring Boot 실행 JAR이 포함된 이미지를 생성했다. 이미지 메타데이터에서 비특권 사용자 `10001`, 포트 `8080`, graceful shutdown을 사용하는 실행 명령을 확인했다. `./gradlew.bat test`, `npm test`, `npm run test:ui`, `git diff --check`도 통과했다. 실제 무료 서버 연결·도메인·TLS·외부 PostgreSQL/Redis/ClamAV 영속 저장소 설정은 서버 사업자 선택 후 배포 환경에서 최종 검증한다.
+`docker build -t better-call-ai:local .`을 실행해 Spring Boot 실행 JAR이 포함된 이미지를 생성했다. 이미지 메타데이터에서 비특권 사용자 `10001`, 포트 `8080`, graceful shutdown을 사용하는 실행 명령을 확인했다. 당시 `./gradlew.bat test`, `npm test`, `npm run test:ui`, `git diff --check`도 통과했다. 실제 무료 서버 연결·도메인·TLS·PostgreSQL/Redis 영속 저장소 설정은 서버 사업자 선택 후 배포 환경에서 최종 검증한다.
 
 ## 분쟁 분야 확장 — 노동·임금 1차 구현
 

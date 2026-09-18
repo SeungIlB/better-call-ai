@@ -51,9 +51,5 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
-      - key: CLAMAV_HOST
-        sync: false
-      - key: CLAMAV_PORT
-        sync: false
       - key: TOSS_SECRET_KEY
         sync: false

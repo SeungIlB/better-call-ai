@@ -26,7 +26,7 @@ public class OcrRepository {
     public Optional<OcrFile> lockFile(UUID caseId, UUID fileId) {
         return jdbc.query("""
                 SELECT id, mime_type, size_bytes, sha256, current_extraction_id, current_ocr_revision_id,
-                       (malware_status = 'clean' AND storage_bucket = 'local-temp'
+                       (storage_bucket = 'local-temp'
                         AND object_key = id::text || '.upload' AND storage_expires_at > clock_timestamp()) AS available
                 FROM casework.files WHERE case_id = ? AND id = ? AND removed_at IS NULL FOR UPDATE
                 """, (row, i) -> OcrFile.builder().id(row.getObject("id", UUID.class))
