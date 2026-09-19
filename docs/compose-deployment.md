@@ -13,7 +13,7 @@ chmod 600 .env
 
 - `DATABASE_MIGRATION_PASSWORD`, `DATABASE_AUTH_PASSWORD`, `DATABASE_APP_PASSWORD`: 서로 다른 비밀번호.
 - `JWT_PRIVATE_KEY_BASE64`, `JWT_PUBLIC_KEY_BASE64`, `IDENTITY_ENCRYPTION_KEY_BASE64`, `IDENTITY_LOOKUP_KEY_BASE64`: README의 OpenSSL 명령으로 생성한 실제 키. 재배포 시 기존 키를 유지한다.
-- `JWT_ISSUER`: 접속 주소(예: `http://서버IP:8080` 또는 `https://서비스도메인`).
+- `JWT_ISSUER`: 접속 주소. 로컬은 `http://localhost:8080`, 현재 Lightsail 배포는 `https://52-79-143-34.sslip.io`를 사용한다.
 - `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `OPENAI_OCR_MODEL`: 채팅·OCR·분석을 사용할 때 설정. OCR 추론 옵션은 선택한 모델에 맞춘다.
 - `LAW_OPEN_DATA_OC`: 법령·판례 외부 조회에 사용할 값.
 
@@ -50,3 +50,38 @@ docker compose down
 `docker compose down -v`는 DB를 포함한 볼륨을 삭제하므로 일반 중지·재배포에 사용하지 않는다. DB 비밀번호와 초기 계정 생성은 빈 PostgreSQL 볼륨의 첫 실행 때 적용된다. 기존 볼륨의 비밀번호는 `.env`만 바꿔도 변경되지 않는다. DB와 암호화 키는 별도로 백업한다.
 
 호스트에서 Java 앱을 실행하는 개발 방식은 `docker compose up -d postgres redis` 후 Windows에서 `.\scripts\run-local.ps1`을 사용한다. Compose 앱과 호스트 앱을 같은 포트에 동시에 실행하지 않는다.
+
+## GitHub Actions 자동 배포
+
+`develop` push와 모든 pull request는 테스트만 실행한다. `main` push는 테스트가 성공한 뒤 Lightsail에 SSH로 접속해 `main`을 fast-forward pull하고 Compose 서비스를 재빌드한다. 배포는 `http://127.0.0.1:8080/actuator/health`가 `UP`을 반환해야 성공한다.
+
+서버의 `~/apps/better-call-ai/.env`는 배포 과정에서 덮어쓰지 않는다. 다음 운영 값은 서버의 `.env`에 직접 유지한다.
+
+```dotenv
+APP_BIND_ADDRESS=127.0.0.1
+JWT_ISSUER=https://52-79-143-34.sslip.io
+JAVA_TOOL_OPTIONS=-Xms256m -Xmx512m
+DATABASE_POOL_SIZE=5
+DATABASE_AUTH_POOL_SIZE=3
+```
+
+GitHub 저장소의 `Settings > Secrets and variables > Actions`에 다음 Repository secrets를 등록한다. 이 값들은 애플리케이션 `.env`에 추가하지 않는다.
+
+- `LIGHTSAIL_HOST`: Lightsail 고정 IPv4 주소
+- `LIGHTSAIL_USER`: `ubuntu`
+- `LIGHTSAIL_SSH_KEY`: Lightsail SSH 개인키 전체 내용
+- `LIGHTSAIL_KNOWN_HOSTS`: 로컬에서 `ssh-keyscan -H <고정 IPv4>`로 확인한 호스트 키
+
+비공개 저장소이므로 서버에서 다음 명령이 추가 인증 입력 없이 성공해야 한다. 인증을 요구하면 GitHub 저장소에 읽기 전용 deploy key를 등록하고 서버의 원격 주소를 SSH 형식으로 변경한다.
+
+```bash
+cd ~/apps/better-call-ai
+GIT_TERMINAL_PROMPT=0 git pull --ff-only origin main
+```
+
+최초 `develop` 브랜치는 로컬에서 생성한 뒤 사용자가 원격에 push한다.
+
+```bash
+git switch -c develop
+git push -u origin develop
+```
